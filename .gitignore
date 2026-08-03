@@ -1,0 +1,19 @@
+# Unreal Engine generated files
+Binaries/
+Build/
+DerivedDataCache/
+Intermediate/
+Saved/
+.vs/
+
+# IDE user state
+*.xcuserdatad/
+*.xcworkspace/xcuserdata/
+
+# Web build artifacts
+web-spike/node_modules/
+web-spike/dist/
+
+# Local archives and OS metadata
+JourneyGame-source-starter.zip
+.DS_Store
