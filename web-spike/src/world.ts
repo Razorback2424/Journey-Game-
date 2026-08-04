@@ -5,7 +5,7 @@ export type CompanionName = 'Scout' | 'Mossling' | 'Moss Slime' | 'Cave Bat';
 export type SceneId = 'town' | 'explore';
 export type EncounterSource = 'gate' | 'wild';
 export interface Point { x: number; y: number; }
-export interface WorldInteractable { id: 'trail' | 'mossling' | 'moonstone' | 'encounter'; label: string; position: Point; approach: Point; action: 'explore' | 'discover' | 'collect' | 'encounter'; }
+export interface WorldInteractable { id: 'home' | 'workshop' | 'trail' | 'mossling' | 'moonstone' | 'encounter'; label: string; position: Point; approach: Point; action: 'rest' | 'workshop' | 'explore' | 'discover' | 'collect' | 'encounter'; }
 export interface NavigationState {
   scene: SceneId; width: number; height: number; player: Point; visualPlayer: Point; destination: Point | null;
   path: Point[]; walkable: Point[]; focused: string | null; moving: boolean; progress: number; facing: 'left' | 'right';
@@ -37,7 +37,11 @@ const maps: Record<SceneId, { width: number; height: number; walkable: Point[]; 
   town: { width: 20, height: 12, walkable: townWalkable, spawn: { x: 10, y: 9 } },
   explore: { width: 20, height: 12, walkable: exploreWalkable, spawn: { x: 7, y: 9 } },
 };
-const townInteractables: WorldInteractable[] = [{ id: 'trail', label: 'Moss Hollow trail', position: { x: 15, y: 3 }, approach: { x: 15, y: 4 }, action: 'explore' }];
+const townInteractables: WorldInteractable[] = [
+  { id: 'home', label: 'Hearthglen home', position: { x: 8, y: 8 }, approach: { x: 8, y: 7 }, action: 'rest' },
+  { id: 'workshop', label: 'Field workshop', position: { x: 12, y: 8 }, approach: { x: 12, y: 7 }, action: 'workshop' },
+  { id: 'trail', label: 'Moss Hollow trail', position: { x: 15, y: 3 }, approach: { x: 15, y: 4 }, action: 'explore' },
+];
 const exploreInteractables: WorldInteractable[] = [
   { id: 'mossling', label: 'Mossling clearing', position: { x: 5, y: 2 }, approach: { x: 5, y: 3 }, action: 'discover' },
   { id: 'moonstone', label: 'Moonstone vein', position: { x: 12, y: 2 }, approach: { x: 12, y: 3 }, action: 'collect' },
@@ -104,7 +108,7 @@ export function advanceNavigation(world: WorldState, elapsed = NAVIGATION_STEP_M
   return changed;
 }
 function focusIfNearby(world: WorldState) { const item = interactables(world).find((candidate) => same(candidate.approach, world.navigation.player)); if (item) { world.navigation.focused = item.id; world.navigation.destination = null; world.message = `At ${item.label}. Interact when ready.`; } }
-export function interactFocused(world: WorldState) { const item = interactables(world).find((candidate) => candidate.id === world.navigation.focused); if (!item || world.navigation.moving) return false; if (item.action === 'explore') enterExplore(world); if (item.action === 'discover') discoverCompanion(world); if (item.action === 'collect') collectResource(world); if (item.action === 'encounter') startEncounter(world, 'gate'); return true; }
+export function interactFocused(world: WorldState) { const item = interactables(world).find((candidate) => candidate.id === world.navigation.focused); if (!item || world.navigation.moving) return false; if (item.action === 'rest') world.message = 'The party rests at Hearthglen home. Everyone is ready for the next expedition.'; if (item.action === 'workshop') world.message = world.townLevel >= 2 ? 'Inside the field workshop, your expedition materials and creature roster are ready to prepare.' : world.materials >= 3 ? 'The workshop plans are ready. Build it from the field notes when you are ready.' : 'The workshop lot needs 3 Moonstone to open.'; if (item.action === 'explore') enterExplore(world); if (item.action === 'discover') discoverCompanion(world); if (item.action === 'collect') collectResource(world); if (item.action === 'encounter') startEncounter(world, 'gate'); return true; }
 function resetNavigation(world: WorldState, scene: SceneId) { world.navigation = navigationFor(scene); }
 export function enterExplore(world: WorldState) { world.mode = 'explore'; resetNavigation(world, 'explore'); world.message = 'Tap or click a clear route through Moss Hollow.'; }
 export function returnToTown(world: WorldState) { world.mode = 'town'; resetNavigation(world, 'town'); world.message = world.encounterCleared ? 'Back home. Your new roster is ready for future expeditions.' : 'Back home. Choose where to walk next.'; }

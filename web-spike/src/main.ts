@@ -1,4 +1,4 @@
-import { activeUnit, attack, capture, captureChance, defend, endTurn, isCoverTile, isDifficultTile, mend, move, previewAttackDamage, setCommand, useFocus, validAttackTargets, validCaptureTargets, validMendTargets, validMoveTiles, type BattleState, type CommandType, type Tile, type Unit } from './battle';
+import { activeUnit, attack, capture, captureChance, defend, endPlayerTurn, isCoverTile, isDifficultTile, mend, move, previewAttackDamage, resolveActiveEnemyTurn, setCommand, useFocus, validAttackTargets, validCaptureTargets, validMendTargets, validMoveTiles, type BattleState, type CommandType, type Tile, type Unit } from './battle';
 import { advanceNavigation, completeBattle, interactFocused, interactables, moveToInteractable, restoreWorld, returnToTown, setActiveCompanion, upgradeTown, setDestination, WORLD_SAVE_KEY, type Point } from './world';
 import './style.css';
 
@@ -9,11 +9,11 @@ const app = document.querySelector<HTMLDivElement>('#app')!;
 const gridUnit = 100 / 14;
 // Public assets are not fingerprinted by Vite. Keep this release token in the URL so a
 // previously cached Pages 404 cannot survive after an asset-only deployment.
-const asset = (path: string) => `${import.meta.env.BASE_URL}assets/${path}?v=20260804e`;
+const asset = (path: string) => `${import.meta.env.BASE_URL}assets/${path}?v=20260804f`;
 document.documentElement.style.setProperty('--ui-chrome', `url("${asset('ui/painterly-ui-chrome.png')}")`);
 document.documentElement.style.setProperty('--reward-background', `url("${asset('world/hearthglen-bg.png')}")`);
 const animationSource: Record<string, string> = { guardian: asset('battle/battle-sprite-guardian.png'), mossling: asset('battle/battle-sprite-companion.png'), scout: asset('battle/battle-sprite-scout.png'), slime: asset('battle/battle-sprite-enemy-slime.png'), bat: asset('battle/battle-sprite-enemy-bat.png') };
-type CueKind = 'impact' | 'mend' | 'moonstone' | 'discovery' | 'upgrade' | 'move' | 'victory';
+type CueKind = 'impact' | 'mend' | 'moonstone' | 'discovery' | 'upgrade' | 'move' | 'enemy-move' | 'enemy-attack' | 'victory';
 interface Cue { id: number; kind: CueKind; unitId?: string; targetId?: string; }
 let cue: Cue | null = null;
 let cueSequence = 0;
@@ -70,12 +70,14 @@ async function requestLandscape() {
 function renderNavigationLayer() {
   const nav = world.navigation;
   const player = `<div class="world-player ${nav.moving ? 'walking' : 'idle'} facing-${nav.facing}" style="${pointStyle(nav.visualPlayer, nav)}" aria-label="Guardian party avatar, ${nav.moving ? `walking ${nav.facing}` : 'standing'}"><i class="world-player-shadow"></i><span class="world-player-direction"><span class="world-player-sprite" style="--idle-sprite:url('${asset('battle/battle-sprite-guardian.png')}')" aria-hidden="true"></span></span></div>`;
+  const companionSprite = world.activeCompanion === 'Mossling' ? animationSource.mossling : world.activeCompanion === 'Moss Slime' ? animationSource.slime : world.activeCompanion === 'Cave Bat' ? animationSource.bat : animationSource.scout;
+  const companion = `<div class="world-companion ${nav.moving ? 'walking' : ''}" style="${pointStyle(nav.visualPlayer, nav)}" aria-label="${escapeHtml(world.activeCompanion)} follows Guardian"><span style="--companion-sprite:url('${companionSprite}')"></span><em>${escapeHtml(world.activeCompanion)}</em></div>`;
   const destination = nav.destination ? `<div class="destination-marker" style="${pointStyle(nav.destination, nav)}" aria-label="Destination"></div>` : '';
-  return `<div class="world-navigation"><button class="world-map-input" data-world-map aria-label="Choose a safe place for Guardian to walk">Move Guardian</button>${destination}${player}</div>`;
+  return `<div class="world-navigation"><button class="world-map-input" data-world-map aria-label="Choose a safe place for Guardian to walk">Move Guardian</button>${destination}${companion}${player}</div>`;
 }
 function renderTownStage() {
   const workshopOpen = world.townLevel >= 2;
-  return `<div class="town-stage"><img class="world-bg" src="${asset('world/hearthglen-bg.png')}" alt="Hearthglen village"><img class="town-building home-building" src="${asset('world/hearthglen-home.png')}" alt="Hearthglen home"><img class="town-building workshop-building ${cue?.kind === 'upgrade' ? 'upgrade-reveal' : ''}" src="${asset(`world/${workshopOpen ? 'workshop-open' : 'workshop-closed'}.png`)}" alt="${workshopOpen ? 'Open field workshop' : 'Closed field workshop'}">${renderNavigationLayer()}<button class="world-interactable town-trail ${world.navigation.focused === 'trail' ? 'focused' : ''}" data-interactable="trail"><span>TO MOSS HOLLOW</span></button>${cue?.kind === 'upgrade' ? `<div class="world-cue workshop-cue"><img src="${asset('effects/discovery.png')}" alt=""></div>` : ''}<div class="place-copy home-copy"><strong>HEARTHGLEN HOME</strong><span>A safe return after every expedition.</span></div><div class="place-copy workshop-copy"><strong>${workshopOpen ? 'FIELD WORKSHOP OPEN' : 'WORKSHOP LOT'}</strong><span>${workshopOpen ? 'Materials can now strengthen your team.' : 'Bring Moonstone home to begin.'}</span></div></div>`;
+  return `<div class="town-stage"><img class="world-bg" src="${asset('world/hearthglen-bg.png')}" alt="Hearthglen village"><img class="town-building home-building" src="${asset('world/hearthglen-home.png')}" alt="Hearthglen home"><img class="town-building workshop-building ${cue?.kind === 'upgrade' ? 'upgrade-reveal' : ''}" src="${asset(`world/${workshopOpen ? 'workshop-open' : 'workshop-closed'}.png`)}" alt="${workshopOpen ? 'Open field workshop' : 'Closed field workshop'}">${renderNavigationLayer()}<button class="world-interactable town-trail ${world.navigation.focused === 'trail' ? 'focused' : ''}" data-interactable="trail"><span>TO MOSS HOLLOW</span></button>${cue?.kind === 'upgrade' ? `<div class="world-cue workshop-cue"><img src="${asset('effects/discovery.png')}" alt=""></div>` : ''}<button class="place-copy town-place home-copy ${world.navigation.focused === 'home' ? 'focused' : ''}" data-interactable="home"><strong>HEARTHGLEN HOME</strong><span>Rest and prepare for the next expedition.</span></button><button class="place-copy town-place workshop-copy ${world.navigation.focused === 'workshop' ? 'focused' : ''}" data-interactable="workshop"><strong>${workshopOpen ? 'FIELD WORKSHOP OPEN' : 'WORKSHOP LOT'}</strong><span>${workshopOpen ? 'Prepare materials and companions.' : 'Bring Moonstone home to begin.'}</span></button></div>`;
 }
 function renderExploreStage() {
   const items = interactables(world);
@@ -100,12 +102,13 @@ function renderBattleStage() {
     return `<button class="battle-tile ${classes}" data-action="tile" data-tile="${key}" style="left:${(5 + x - y) * gridUnit}%;top:${(x + y) * gridUnit}%;width:${2 * gridUnit}%;height:${2 * gridUnit}%" aria-label="Tile ${x + 1}, ${y + 1}${isCoverTile(state, x, y) ? ', cover' : ''}${isDifficultTile(state, x, y) ? ', difficult terrain' : ''}"></button>`;
   }).join('');
   const units = state.units.filter((unit) => unit.hp > 0).map((unit) => {
-    const point = unitPosition(unit); const hp = Math.round((unit.hp / unit.maxHp) * 100); const cueClass = cue?.targetId === unit.id && cue.kind === 'impact' ? 'hit' : cue?.unitId === unit.id && cue.kind === 'move' ? 'move-arrive' : '';
+    const point = unitPosition(unit); const hp = Math.round((unit.hp / unit.maxHp) * 100); const cueClass = cue?.targetId === unit.id && (cue.kind === 'impact' || cue.kind === 'enemy-attack') ? 'hit' : cue?.unitId === unit.id && (cue.kind === 'move' || cue.kind === 'enemy-move') ? 'move-arrive' : cue?.unitId === unit.id && cue.kind === 'enemy-attack' ? 'enemy-attack' : '';
     const stateText = `${unit.moved ? 'Move ✓' : `Move ${unit.moveRange}`} · ${unit.actionUsed ? 'Action ✓' : unit.defending ? 'Defending' : 'Action ready'} · ${unit.bonusUsed ? 'Bonus ✓' : unit.bonusAbility ? 'Bonus ready' : 'No bonus'}`;
     const captureText = unit.team === 'enemy' ? `<em class="capture-readout ${captureChance(unit) ? 'ready' : ''}">${captureChance(unit) ? `Capture ${captureChance(unit)}%` : `${Math.ceil(unit.maxHp * .35)} HP to capture`}</em>` : '';
     const attackText = unit.team === 'enemy' && current?.team === 'player' && validAttackTargets(state).some((target) => target.id === unit.id) ? `<em class="attack-readout">Hit ${previewAttackDamage(state, unit)}</em>` : '';
     const sprite = animationSource[unit.id] ?? (unit.name === 'Moss Slime' ? animationSource.slime : unit.name === 'Cave Bat' ? animationSource.bat : animationSource.scout);
-    return `<button class="battle-unit ${unit.team} ${current?.id === unit.id ? 'active' : ''} ${cueClass}" data-unit="${unit.id}" style="left:${point.left}%;top:${point.top}%" aria-label="${escapeHtml(unit.name)}, ${unit.hp} of ${unit.maxHp} health, ${stateText}"><i class="turn-diamond"></i><span class="sprite-animated" style="--sprite:url('${sprite}')" aria-hidden="true"></span><div class="health"><i style="width:${hp}%"></i></div><span>${escapeHtml(unit.name)}</span><small>${stateText}</small>${attackText}${captureText}</button>`;
+    const profile = unit.id === 'mossling' ? 'Mend · balanced' : unit.id === 'moss-slime' ? 'Mend · durable / slow' : unit.id === 'cave-bat' ? 'Focus · fast ranged / fragile' : unit.id === 'scout' ? 'Focus · ranged support' : unit.team === 'enemy' ? `${unit.attackRange > 1 ? 'Ranged threat' : 'Melee threat'}` : 'Frontline';
+    return `<button class="battle-unit ${unit.team} ${current?.id === unit.id ? 'active' : ''} ${cueClass}" data-unit="${unit.id}" style="left:${point.left}%;top:${point.top}%" aria-label="${escapeHtml(unit.name)}, ${unit.hp} of ${unit.maxHp} health, ${stateText}"><i class="turn-diamond"></i><span class="sprite-animated" style="--sprite:url('${sprite}')" aria-hidden="true"></span><div class="health"><i style="width:${hp}%"></i></div><span>${escapeHtml(unit.name)}</span><small>${profile} · ${stateText}</small>${attackText}${captureText}</button>`;
   }).join('');
   const target = cue?.targetId ? state.units.find((unit) => unit.id === cue?.targetId) : undefined; const cuePoint = target ? unitPosition(target) : undefined;
   const battleCue = cue?.kind === 'impact' && cuePoint ? `<img class="battle-cue impact-cue" src="${asset('effects/impact.png')}" alt="" style="left:${cuePoint.left}%;top:${cuePoint.top}%">` : cue?.kind === 'mend' && cuePoint ? `<img class="battle-cue mend-cue" src="${asset('effects/mend.png')}" alt="" style="left:${cuePoint.left}%;top:${cuePoint.top}%">` : cue?.kind === 'victory' ? '<div class="victory-glow"></div>' : '';
@@ -149,11 +152,25 @@ function onTileClick(x: number, y: number) {
   feedback = success ? (state.events[0]?.message ?? 'Action complete.') : mode === 'move' ? 'That destination is not reachable.' : 'That tile is not a valid target.'; settleVictory(); render();
 }
 function chooseMode(command: CommandType) { const state = world.battle; if (!state) return; pendingCaptureId = null; if (setCommand(state, command)) { resetBattleSelection(); feedback = commandLabel(command); } else feedback = command === 'attack' ? 'No enemy is in attack range.' : command === 'mend' ? 'No injured ally is in Mend range.' : command === 'capture' ? 'No weakened enemy is in capture range, or no orbs remain.' : 'That action is not available.'; render(); }
+function resolveEnemyTurns() {
+  const state = world.battle;
+  if (!state || state.winner || activeUnit(state)?.team !== 'enemy') { settleVictory(); render(); return; }
+  const resolution = resolveActiveEnemyTurn(state);
+  feedback = state.events[0]?.message ?? 'Enemy turn resolved.';
+  if (resolution.movedUnitId && resolution.attackerId && resolution.targetId) {
+    showCue('enemy-move', resolution.movedUnitId); render();
+    window.setTimeout(() => { showCue('enemy-attack', resolution.attackerId, resolution.targetId); render(); window.setTimeout(resolveEnemyTurns, 520); }, 380);
+    return;
+  }
+  if (resolution.movedUnitId) showCue('enemy-move', resolution.movedUnitId);
+  if (resolution.attackerId && resolution.targetId) showCue('enemy-attack', resolution.attackerId, resolution.targetId);
+  render(); window.setTimeout(resolveEnemyTurns, resolution.attackerId ? 640 : 440);
+}
 function handleBattleAction(action: string) {
   const state = world.battle!; if (action === 'attack' || action === 'move' || action === 'mend' || action === 'capture') { chooseMode(action); return; }
   if (action === 'defend') { if (defend(state)) { showCue('mend', activeUnit(state)?.id, activeUnit(state)?.id); setFeedbackFromEvent(state, 'Defending.'); } else feedback = 'Action already used.'; }
   if (action === 'focus') { if (useFocus(state)) setFeedbackFromEvent(state, 'Focused.'); else feedback = 'Bonus action already used.'; }
-  if (action === 'end') { endTurn(state); setFeedbackFromEvent(state, 'Turn ended.'); }
+  if (action === 'end') { if (endPlayerTurn(state)) { setFeedbackFromEvent(state, 'Turn ended.'); render(); window.setTimeout(resolveEnemyTurns, 260); return; } }
   if (action === 'cancel') { state.command = 'none'; pendingCaptureId = null; feedback = 'Action cancelled.'; }
   settleVictory(); render();
 }
