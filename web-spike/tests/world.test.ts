@@ -18,9 +18,18 @@ test('encounter completion rewards the town and unlocks a visible upgrade', () =
   collectResource(world);
   startEncounter(world);
   assert.equal(world.mode, 'battle');
+  world.battle!.winner = 'player';
+  world.battle!.rewards.xp = 20;
+  world.battle!.rewards.captured.push('Moss Slime');
+  world.battle!.rewards.loot.push({ id: 'moss-gel', name: 'Moss Gel', quantity: 1 });
+  world.battle!.captureOrbs = 2;
   completeBattle(world);
   assert.equal(world.encounterCleared, true);
   assert.equal(world.materials, 5);
+  assert.equal(world.teamXp, 20);
+  assert.deepEqual(world.capturedRoster, ['Moss Slime']);
+  assert.equal(world.captureOrbs, 2);
+  assert.equal(world.mode, 'rewards');
   upgradeTown(world);
   assert.equal(world.townLevel, 2);
   assert.equal(world.materials, 2);
