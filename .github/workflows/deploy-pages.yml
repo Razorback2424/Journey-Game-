@@ -1,0 +1,49 @@
+name: Deploy Journey Game web spike
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web-spike/**"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web-spike/package-lock.json
+      - run: npm ci
+        working-directory: web-spike
+      - run: npm run build:pages
+        working-directory: web-spike
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web-spike/dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
