@@ -9,7 +9,7 @@ const app = document.querySelector<HTMLDivElement>('#app')!;
 const gridUnit = 100 / 14;
 // Public assets are not fingerprinted by Vite. Keep this release token in the URL so a
 // previously cached Pages 404 cannot survive after an asset-only deployment.
-const asset = (path: string) => `${import.meta.env.BASE_URL}assets/${path}?v=20260804d`;
+const asset = (path: string) => `${import.meta.env.BASE_URL}assets/${path}?v=20260804e`;
 document.documentElement.style.setProperty('--ui-chrome', `url("${asset('ui/painterly-ui-chrome.png')}")`);
 document.documentElement.style.setProperty('--reward-background', `url("${asset('world/hearthglen-bg.png')}")`);
 const animationSource: Record<string, string> = { guardian: asset('battle/battle-sprite-guardian.png'), mossling: asset('battle/battle-sprite-companion.png'), scout: asset('battle/battle-sprite-scout.png'), slime: asset('battle/battle-sprite-enemy-slime.png'), bat: asset('battle/battle-sprite-enemy-bat.png') };
