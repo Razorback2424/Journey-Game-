@@ -7,7 +7,9 @@ declare global { interface Window { render_game_to_text: () => string; advanceTi
 const world = createWorld();
 const app = document.querySelector<HTMLDivElement>('#app')!;
 const gridUnit = 100 / 14;
-const asset = (path: string) => `${import.meta.env.BASE_URL}assets/${path}`;
+// Public assets are not fingerprinted by Vite. Keep this release token in the URL so a
+// previously cached Pages 404 cannot survive after an asset-only deployment.
+const asset = (path: string) => `${import.meta.env.BASE_URL}assets/${path}?v=20260804`;
 document.documentElement.style.setProperty('--ui-chrome', `url("${asset('ui/painterly-ui-chrome.png')}")`);
 document.documentElement.style.setProperty('--reward-background', `url("${asset('world/hearthglen-bg.png')}")`);
 const animationFor: Record<string, string> = { guardian: 'guardian', mossling: 'companion', scout: 'scout', slime: 'enemy-slime', bat: 'enemy-bat' };
