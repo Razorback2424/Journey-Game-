@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { collectResource, completeBattle, createWorld, discoverCompanion, enterExplore, restoreWorld, setActiveCompanion, startEncounter, upgradeTown } from '../src/world.ts';
+import { advanceNavigation, collectResource, completeBattle, createWorld, discoverCompanion, enterExplore, interactables, moveToInteractable, restoreWorld, setActiveCompanion, setDestination, snapToWalkable, startEncounter, upgradeTown } from '../src/world.ts';
 
 test('the vertical slice connects town, exploration, discovery, and resources', () => {
   const world = createWorld();
@@ -62,4 +62,30 @@ test('saved progression restores after a browser refresh and malformed saves fal
   assert.deepEqual(restored.discovered, ['Guardian', 'Mossling']);
   assert.equal(restored.teamXp, 12);
   assert.equal(restoreWorld('{bad json').mode, 'town');
+});
+
+test('scene-aware navigation snaps a nearby click and rejects terrain behind buildings', () => {
+  const world = createWorld();
+  const snapped = snapToWalkable(world.navigation, { x: 14, y: 2 });
+  assert.deepEqual(snapped, { x: 14, y: 3 });
+  assert.equal(setDestination(world, { x: 5, y: 10 }), false);
+  assert.match(world.message, /impassable/);
+});
+
+test('a new navigation target replaces the active route and reaches authored approaches', () => {
+  const world = createWorld();
+  assert.equal(moveToInteractable(world, 'trail'), true);
+  const firstDestination = world.navigation.destination;
+  assert.ok(firstDestination);
+  assert.equal(setDestination(world, { x: 12, y: 5 }), true);
+  assert.deepEqual(world.navigation.destination, { x: 12, y: 5 });
+  assert.notDeepEqual(world.navigation.destination, firstDestination);
+  for (let index = 0; index < 40; index += 1) advanceNavigation(world, 180);
+  assert.deepEqual(world.navigation.player, { x: 12, y: 5 });
+  enterExplore(world);
+  for (const item of interactables(world)) {
+    assert.equal(moveToInteractable(world, item.id), true, `${item.id} should be reachable`);
+    for (let index = 0; index < 60; index += 1) advanceNavigation(world, 180);
+    assert.deepEqual(world.navigation.player, item.approach, `${item.id} should end at its approach point`);
+  }
 });
