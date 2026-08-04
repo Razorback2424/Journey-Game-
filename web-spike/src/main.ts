@@ -12,7 +12,7 @@ const gridUnit = 100 / 14;
 const asset = (path: string) => `${import.meta.env.BASE_URL}assets/${path}?v=20260804`;
 document.documentElement.style.setProperty('--ui-chrome', `url("${asset('ui/painterly-ui-chrome.png')}")`);
 document.documentElement.style.setProperty('--reward-background', `url("${asset('world/hearthglen-bg.png')}")`);
-const animationSource: Record<string, string> = { guardian: asset('battle/animation/guardian-idle.png'), mossling: asset('battle/animation/mossling-idle.png'), scout: asset('battle/animation/scout-idle.png'), slime: asset('battle/animation/slime-idle.png'), bat: asset('battle/animation/bat-idle.png') };
+const animationSource: Record<string, string> = { guardian: asset('battle/battle-sprite-guardian.png'), mossling: asset('battle/battle-sprite-companion.png'), scout: asset('battle/battle-sprite-scout.png'), slime: asset('battle/battle-sprite-enemy-slime.png'), bat: asset('battle/battle-sprite-enemy-bat.png') };
 type CueKind = 'impact' | 'mend' | 'moonstone' | 'discovery' | 'upgrade' | 'move' | 'victory';
 interface Cue { id: number; kind: CueKind; unitId?: string; targetId?: string; }
 let cue: Cue | null = null;
@@ -38,9 +38,28 @@ function settleVictory() { if (world.battle?.winner === 'player' && !world.encou
 function setFeedbackFromEvent(state: BattleState, fallback: string) { feedback = state.events[0]?.message ?? fallback; }
 function resetBattleSelection() { selectedTile = activeUnit(world.battle!) ? { x: activeUnit(world.battle!)!.x, y: activeUnit(world.battle!)!.y } : null; }
 let navigationTimer: number | null = null;
-let navigationFrame = 0;
+let playerEl: HTMLElement | null = null;
 function stopNavigationTimer() { if (navigationTimer !== null) { window.clearTimeout(navigationTimer); navigationTimer = null; } }
-function runNavigation() { stopNavigationTimer(); if (!world.navigation.moving) { render(); return; } if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { advanceNavigation(world, 60_000); render(); return; } navigationTimer = window.setTimeout(() => { advanceNavigation(world, 32); navigationFrame = (navigationFrame + 1) % 4; render(); if (world.navigation.moving) runNavigation(); }, 32); }
+function pointStyle(point: Point, nav = world.navigation) { return `left:${(point.x + .5) * (100 / nav.width)}%;top:${(point.y + .5) * (100 / nav.height)}%`; }
+function updateAvatarPosition() {
+  if (!playerEl) return;
+  const nav = world.navigation;
+  playerEl.setAttribute('style', pointStyle(nav.visualPlayer, nav));
+  playerEl.classList.toggle('facing-left', nav.facing === 'left');
+  playerEl.classList.toggle('facing-right', nav.facing === 'right');
+}
+function runNavigation() {
+  stopNavigationTimer();
+  render();
+  if (!world.navigation.moving) return;
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { advanceNavigation(world, 60_000); render(); return; }
+  const tick = () => {
+    advanceNavigation(world, 32);
+    if (world.navigation.moving) { updateAvatarPosition(); navigationTimer = window.setTimeout(tick, 32); }
+    else { navigationTimer = null; render(); }
+  };
+  navigationTimer = window.setTimeout(tick, 32);
+}
 function chooseDestination(point: Point) { if (setDestination(world, point)) runNavigation(); else render(); }
 
 async function requestLandscape() {
@@ -50,11 +69,8 @@ async function requestLandscape() {
 
 function renderNavigationLayer() {
   const nav = world.navigation;
-  const position = nav.visualPlayer;
-  const pointStyle = (point: Point) => `left:${(point.x + .5) * (100 / nav.width)}%;top:${(point.y + .5) * (100 / nav.height)}%`;
-  const frame = String((navigationFrame % 4) + 1).padStart(2, '0');
-  const player = `<div class="world-player ${nav.moving ? 'walking' : 'idle'} facing-${nav.facing}" style="${pointStyle(position)}" aria-label="Guardian party avatar, ${nav.moving ? 'walking' : 'standing'}"><i class="world-player-shadow"></i><img src="${asset(nav.moving ? `world/guardian-walk/${frame}.png` : 'battle/battle-sprite-guardian.png')}" alt=""></div>`;
-  const destination = nav.destination ? `<div class="destination-marker" style="${pointStyle(nav.destination)}" aria-label="Destination"></div>` : '';
+  const player = `<div class="world-player ${nav.moving ? 'walking' : 'idle'} facing-${nav.facing}" style="${pointStyle(nav.visualPlayer, nav)}" aria-label="Guardian party avatar, ${nav.moving ? 'walking' : 'standing'}"><i class="world-player-shadow"></i><span class="world-player-sprite" style="--idle-sprite:url('${asset('battle/battle-sprite-guardian.png')}');--walk-sprite:url('${asset('world/guardian-walk-strip.png')}')" aria-hidden="true"></span></div>`;
+  const destination = nav.destination ? `<div class="destination-marker" style="${pointStyle(nav.destination, nav)}" aria-label="Destination"></div>` : '';
   return `<div class="world-navigation"><button class="world-map-input" data-world-map aria-label="Choose a safe place for Guardian to walk">Move Guardian</button>${destination}${player}</div>`;
 }
 function renderTownStage() {
@@ -115,6 +131,7 @@ function render() {
   persistWorld();
   const state = world.battle; const mode = world.mode === 'battle' ? `${activeUnit(state!)?.name ?? '—'} · ROUND ${state?.round ?? 1}` : world.mode.toUpperCase(); const stage = world.mode === 'town' ? renderTownStage() : world.mode === 'explore' ? renderExploreStage() : world.mode === 'rewards' ? renderRewardsStage() : renderBattleStage();
   app.innerHTML = `<section class="shell ${world.mode === 'battle' ? 'battle-shell' : ''}"><header><div><span class="kicker">JOURNEYGAME · VERTICAL SLICE</span><h1>${modeTitle()}</h1><p>${escapeHtml(world.message)}</p></div><div class="status"><strong>${mode}</strong><span><i></i>${world.materials} MOONSTONE</span></div></header><div class="layout"><main class="stage ${world.mode}">${stage}</main>${renderSidebar()}</div></section>`;
+  playerEl = app.querySelector('.world-player');
   bindInteractions();
 }
 
