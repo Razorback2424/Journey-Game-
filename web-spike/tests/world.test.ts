@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createTutorialBattle } from '../src/battle.ts';
 import { advanceNavigation, collectResource, completeBattle, createWorld, discoverCompanion, enterExplore, interactables, moveToInteractable, restoreWorld, setActiveCompanion, setDestination, snapToWalkable, startEncounter, upgradeTown } from '../src/world.ts';
 
 test('the vertical slice connects town, exploration, discovery, and resources', () => {
@@ -88,4 +89,26 @@ test('a new navigation target replaces the active route and reaches authored app
     for (let index = 0; index < 60; index += 1) advanceNavigation(world, 180);
     assert.deepEqual(world.navigation.player, item.approach, `${item.id} should end at its approach point`);
   }
+});
+
+test('exploration can trigger repeatable wild encounters after movement', () => {
+  const world = createWorld();
+  enterExplore(world);
+  assert.equal(setDestination(world, { x: 15, y: 5 }), true);
+  for (let index = 0; index < 20 && world.mode === 'explore'; index += 1) advanceNavigation(world, 180);
+  assert.equal(world.mode, 'battle');
+  assert.equal(world.activeEncounterSource, 'wild');
+  world.battle!.winner = 'player';
+  completeBattle(world);
+  assert.equal(world.encounterCount, 1);
+  assert.equal(world.mode, 'rewards');
+});
+
+test('captured creature companions have distinct tactical roles', () => {
+  const slime = createTutorialBattle('Moss Slime').units.find((unit) => unit.id === 'moss-slime')!;
+  const bat = createTutorialBattle('Cave Bat').units.find((unit) => unit.id === 'cave-bat')!;
+  assert.equal(slime.maxHp, 22);
+  assert.equal(slime.ability, 'mend');
+  assert.equal(bat.moveRange, 3);
+  assert.equal(bat.attackRange, 3);
 });

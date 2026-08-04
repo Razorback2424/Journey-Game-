@@ -1,4 +1,6 @@
 export type Team = 'player' | 'enemy';
+export type PlayerCompanion = 'Scout' | 'Mossling' | 'Moss Slime' | 'Cave Bat';
+export type EncounterVariant = 'crossroads' | 'slime-nest' | 'bat-roost';
 export type CommandType = 'attack' | 'move' | 'mend' | 'capture' | 'defend' | 'focus' | 'none';
 export interface Tile { x: number; y: number; }
 export interface Loot { id: string; name: string; quantity: number; }
@@ -20,15 +22,19 @@ const distance = (a: Tile, b: Tile) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y)
 const key = (x: number, y: number) => `${x},${y}`;
 const makeUnit = (unit: Omit<Unit, 'moved' | 'actionUsed' | 'bonusUsed' | 'reactionReady' | 'defending' | 'focused' | 'rewarded'>): Unit => ({ ...unit, moved: false, actionUsed: false, bonusUsed: false, reactionReady: true, defending: false, focused: false, rewarded: false });
 
-export function createTutorialBattle(companion: 'Scout' | 'Mossling' = 'Scout', captureOrbs = 3): BattleState {
+export function createTutorialBattle(companion: PlayerCompanion = 'Scout', captureOrbs = 3, variant: EncounterVariant = 'crossroads'): BattleState {
   const companionUnit = companion === 'Mossling'
     ? makeUnit({ id: 'mossling', name: 'Mossling', team: 'player', hp: 14, maxHp: 14, attack: 3, ability: 'mend', x: 1, y: 4, moveRange: 2, attackRange: 1 })
-    : makeUnit({ id: 'scout', name: 'Scout', team: 'player', hp: 12, maxHp: 12, attack: 4, bonusAbility: 'focus', x: 1, y: 4, moveRange: 2, attackRange: 2 });
-  return { units: [
-    makeUnit({ id: 'guardian', name: 'Guardian', team: 'player', hp: 18, maxHp: 18, attack: 5, x: 1, y: 2, moveRange: 2, attackRange: 1 }), companionUnit,
-    makeUnit({ id: 'slime', name: 'Moss Slime', team: 'enemy', hp: 14, maxHp: 14, attack: 3, x: 6, y: 2, moveRange: 2, attackRange: 1, xpValue: 20, loot: { id: 'moss-gel', name: 'Moss Gel', quantity: 1 }, captureIdentity: 'Moss Slime', captureReward: { id: 'slime-essence', name: 'Slime Essence', quantity: 1 } }),
-    makeUnit({ id: 'bat', name: 'Cave Bat', team: 'enemy', hp: 10, maxHp: 10, attack: 4, x: 6, y: 4, moveRange: 3, attackRange: 1, xpValue: 16, loot: { id: 'bat-wing', name: 'Cave Wing', quantity: 1 }, captureIdentity: 'Cave Bat' }),
-  ], turnIndex: 0, round: 1, winner: null, events: [{ message: `${companion} joins Guardian for this encounter.`, kind: 'info' }], command: 'none', grid: { width: 8, height: 6 }, coverTiles: [{ x: 3, y: 2 }, { x: 4, y: 3 }, { x: 3, y: 4 }], difficultTiles: [{ x: 2, y: 3 }, { x: 5, y: 3 }], captureOrbs, captureAttempts: 0, rewards: { xp: 0, loot: [], captured: [], defeated: [] } };
+    : companion === 'Moss Slime'
+      ? makeUnit({ id: 'moss-slime', name: 'Moss Slime', team: 'player', hp: 22, maxHp: 22, attack: 3, ability: 'mend', x: 1, y: 4, moveRange: 1, attackRange: 1 })
+      : companion === 'Cave Bat'
+        ? makeUnit({ id: 'cave-bat', name: 'Cave Bat', team: 'player', hp: 10, maxHp: 10, attack: 4, bonusAbility: 'focus', x: 1, y: 4, moveRange: 3, attackRange: 3 })
+        : makeUnit({ id: 'scout', name: 'Scout', team: 'player', hp: 12, maxHp: 12, attack: 4, bonusAbility: 'focus', x: 1, y: 4, moveRange: 2, attackRange: 2 });
+  const slime = (id: string, x: number, y: number) => makeUnit({ id, name: 'Moss Slime', team: 'enemy', hp: 14, maxHp: 14, attack: 3, x, y, moveRange: 2, attackRange: 1, xpValue: 20, loot: { id: 'moss-gel', name: 'Moss Gel', quantity: 1 }, captureIdentity: 'Moss Slime', captureReward: { id: 'slime-essence', name: 'Slime Essence', quantity: 1 } });
+  const bat = (id: string, x: number, y: number) => makeUnit({ id, name: 'Cave Bat', team: 'enemy', hp: 10, maxHp: 10, attack: 4, x, y, moveRange: 3, attackRange: 1, xpValue: 16, loot: { id: 'bat-wing', name: 'Cave Wing', quantity: 1 }, captureIdentity: 'Cave Bat' });
+  const enemies = variant === 'slime-nest' ? [slime('slime-a', 6, 2), slime('slime-b', 6, 4)] : variant === 'bat-roost' ? [bat('bat-a', 6, 2), bat('bat-b', 6, 4)] : [slime('slime', 6, 2), bat('bat', 6, 4)];
+  const title = variant === 'slime-nest' ? 'A slime nest stirs in the brush.' : variant === 'bat-roost' ? 'A cave-bat flock descends from the canopy.' : 'A territorial pair blocks the path.';
+  return { units: [makeUnit({ id: 'guardian', name: 'Guardian', team: 'player', hp: 18, maxHp: 18, attack: 5, x: 1, y: 2, moveRange: 2, attackRange: 1 }), companionUnit, ...enemies], turnIndex: 0, round: 1, winner: null, events: [{ message: `${title} ${companion} joins Guardian.`, kind: 'info' }], command: 'none', grid: { width: 8, height: 6 }, coverTiles: [{ x: 3, y: 2 }, { x: 4, y: 3 }, { x: 3, y: 4 }], difficultTiles: [{ x: 2, y: 3 }, { x: 5, y: 3 }], captureOrbs, captureAttempts: 0, rewards: { xp: 0, loot: [], captured: [], defeated: [] } };
 }
 
 export function activeUnit(state: BattleState) { return state.units[state.turnIndex]; }

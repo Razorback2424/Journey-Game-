@@ -1,8 +1,9 @@
-import { createTutorialBattle, type BattleRewards, type BattleState, type Loot } from './battle';
+import { createTutorialBattle, type BattleRewards, type BattleState, type EncounterVariant, type Loot } from './battle';
 
 export type Mode = 'town' | 'explore' | 'battle' | 'rewards';
 export type CompanionName = 'Scout' | 'Mossling' | 'Moss Slime' | 'Cave Bat';
 export type SceneId = 'town' | 'explore';
+export type EncounterSource = 'gate' | 'wild';
 export interface Point { x: number; y: number; }
 export interface WorldInteractable { id: 'trail' | 'mossling' | 'moonstone' | 'encounter'; label: string; position: Point; approach: Point; action: 'explore' | 'discover' | 'collect' | 'encounter'; }
 export interface NavigationState {
@@ -14,6 +15,7 @@ export interface WorldState {
   mode: Mode; townLevel: number; materials: number; discovered: string[]; activeCompanion: CompanionName;
   hasAcceptedRequest: boolean; resourceCollected: boolean; encounterCleared: boolean; battle: BattleState | null; message: string;
   teamXp: number; capturedRoster: string[]; captureOrbs: number; lootInventory: Loot[]; battleRewardHistory: RewardSummary[]; lastRewards: RewardSummary | null;
+  encounterSteps: number; encounterSeed: number; encounterCount: number; activeEncounterSource: EncounterSource | null;
   navigation: NavigationState;
 }
 
@@ -48,7 +50,7 @@ function navigationFor(scene: SceneId, player = maps[scene].spawn): NavigationSt
 }
 function validPoint(navigation: NavigationState, point: Point) { return point.x >= 0 && point.y >= 0 && point.x < navigation.width && point.y < navigation.height; }
 function isWalkable(navigation: NavigationState, point: Point) { return navigation.walkable.some((tile) => same(tile, point)); }
-export function createWorld(): WorldState { return { mode: 'town', townLevel: 1, materials: 0, discovered: ['Guardian'], activeCompanion: 'Scout', hasAcceptedRequest: false, resourceCollected: false, encounterCleared: false, battle: null, message: 'Choose a destination in Hearthglen.', teamXp: 0, capturedRoster: [], captureOrbs: 3, lootInventory: [], battleRewardHistory: [], lastRewards: null, navigation: navigationFor('town') }; }
+export function createWorld(): WorldState { return { mode: 'town', townLevel: 1, materials: 0, discovered: ['Guardian'], activeCompanion: 'Scout', hasAcceptedRequest: false, resourceCollected: false, encounterCleared: false, battle: null, message: 'Choose a destination in Hearthglen.', teamXp: 0, capturedRoster: [], captureOrbs: 3, lootInventory: [], battleRewardHistory: [], lastRewards: null, encounterSteps: 0, encounterSeed: 17, encounterCount: 0, activeEncounterSource: null, navigation: navigationFor('town') }; }
 export function restoreWorld(saved: string | null): WorldState {
   const fresh = createWorld();
   if (!saved) return fresh;
@@ -57,7 +59,7 @@ export function restoreWorld(saved: string | null): WorldState {
     if (!parsed || !['town', 'explore', 'battle', 'rewards'].includes(parsed.mode ?? '')) return fresh;
     const scene: SceneId = parsed.mode === 'explore' ? 'explore' : 'town';
     const restored = navigationFor(scene, parsed.navigation?.player && isWalkable(navigationFor(scene), parsed.navigation.player) ? parsed.navigation.player : maps[scene].spawn);
-    return { ...fresh, ...parsed, discovered: Array.isArray(parsed.discovered) ? parsed.discovered : fresh.discovered, capturedRoster: Array.isArray(parsed.capturedRoster) ? parsed.capturedRoster : [], lootInventory: Array.isArray(parsed.lootInventory) ? parsed.lootInventory : [], battleRewardHistory: Array.isArray(parsed.battleRewardHistory) ? parsed.battleRewardHistory : [], navigation: restored };
+    return { ...fresh, ...parsed, discovered: Array.isArray(parsed.discovered) ? parsed.discovered : fresh.discovered, capturedRoster: Array.isArray(parsed.capturedRoster) ? parsed.capturedRoster : [], lootInventory: Array.isArray(parsed.lootInventory) ? parsed.lootInventory : [], battleRewardHistory: Array.isArray(parsed.battleRewardHistory) ? parsed.battleRewardHistory : [], encounterSteps: typeof parsed.encounterSteps === 'number' ? parsed.encounterSteps : 0, encounterSeed: typeof parsed.encounterSeed === 'number' ? parsed.encounterSeed : 17, encounterCount: typeof parsed.encounterCount === 'number' ? parsed.encounterCount : 0, activeEncounterSource: parsed.activeEncounterSource === 'gate' || parsed.activeEncounterSource === 'wild' ? parsed.activeEncounterSource : null, navigation: restored };
   } catch { return fresh; }
 }
 export function interactables(world: WorldState) { return world.mode === 'town' ? townInteractables : world.mode === 'explore' ? exploreInteractables.filter((item) => (item.id !== 'mossling' || !world.discovered.includes('Mossling')) && (item.id !== 'moonstone' || !world.resourceCollected) && (item.id !== 'encounter' || !world.encounterCleared)) : []; }
@@ -95,20 +97,35 @@ export function advanceNavigation(world: WorldState, elapsed = NAVIGATION_STEP_M
     const target = navigation.path[0]; const available = NAVIGATION_STEP_MS * (1 - navigation.progress); const consumed = Math.min(available, remaining); navigation.progress += consumed / NAVIGATION_STEP_MS; remaining -= consumed;
     const direction = target.x - navigation.player.x; if (direction) navigation.facing = direction < 0 ? 'left' : 'right';
     navigation.visualPlayer = { x: navigation.player.x + (target.x - navigation.player.x) * navigation.progress, y: navigation.player.y + (target.y - navigation.player.y) * navigation.progress }; changed = true;
-    if (navigation.progress >= .999) { navigation.player = clone(target); navigation.visualPlayer = clone(target); navigation.path.shift(); navigation.progress = 0; }
+    if (navigation.progress >= .999) { navigation.player = clone(target); navigation.visualPlayer = clone(target); navigation.path.shift(); navigation.progress = 0; if (world.mode === 'explore' && maybeStartWildEncounter(world)) { remaining = 0; break; } }
   }
   navigation.moving = navigation.path.length > 0;
   if (!navigation.moving) focusIfNearby(world);
   return changed;
 }
 function focusIfNearby(world: WorldState) { const item = interactables(world).find((candidate) => same(candidate.approach, world.navigation.player)); if (item) { world.navigation.focused = item.id; world.navigation.destination = null; world.message = `At ${item.label}. Interact when ready.`; } }
-export function interactFocused(world: WorldState) { const item = interactables(world).find((candidate) => candidate.id === world.navigation.focused); if (!item || world.navigation.moving) return false; if (item.action === 'explore') enterExplore(world); if (item.action === 'discover') discoverCompanion(world); if (item.action === 'collect') collectResource(world); if (item.action === 'encounter') startEncounter(world); return true; }
+export function interactFocused(world: WorldState) { const item = interactables(world).find((candidate) => candidate.id === world.navigation.focused); if (!item || world.navigation.moving) return false; if (item.action === 'explore') enterExplore(world); if (item.action === 'discover') discoverCompanion(world); if (item.action === 'collect') collectResource(world); if (item.action === 'encounter') startEncounter(world, 'gate'); return true; }
 function resetNavigation(world: WorldState, scene: SceneId) { world.navigation = navigationFor(scene); }
 export function enterExplore(world: WorldState) { world.mode = 'explore'; resetNavigation(world, 'explore'); world.message = 'Tap or click a clear route through Moss Hollow.'; }
 export function returnToTown(world: WorldState) { world.mode = 'town'; resetNavigation(world, 'town'); world.message = world.encounterCleared ? 'Back home. Your new roster is ready for future expeditions.' : 'Back home. Choose where to walk next.'; }
 export function collectResource(world: WorldState) { if (world.resourceCollected) return; world.resourceCollected = true; world.materials += 3; world.navigation.focused = null; world.message = 'You gathered 3 moonstone fragments. The town can put them to work.'; }
 export function discoverCompanion(world: WorldState) { if (world.discovered.includes('Mossling')) return; world.discovered.push('Mossling'); world.navigation.focused = null; world.message = 'A Mossling joins your field notes. It may become a future team choice.'; }
 export function setActiveCompanion(world: WorldState, companion: CompanionName) { if (companion === 'Mossling' && !world.discovered.includes('Mossling')) return; if ((companion === 'Moss Slime' || companion === 'Cave Bat') && !world.capturedRoster.includes(companion)) return; world.activeCompanion = companion; world.message = `${companion} is ready to join Guardian on the next expedition.`; }
-export function startEncounter(world: WorldState) { if (world.encounterCleared) { world.message = 'The hollow is quiet now. More regions will open in a larger slice.'; return; } world.mode = 'battle'; world.navigation.moving = false; world.battle = createTutorialBattle(world.activeCompanion === 'Mossling' ? 'Mossling' : 'Scout', world.captureOrbs); world.message = 'A territorial pair blocks the path. Win the battle or capture the creatures to bring its reward home.'; }
+function nextEncounterRoll(world: WorldState) { world.encounterSeed = (world.encounterSeed * 1664525 + 1013904223) >>> 0; return world.encounterSeed % 100; }
+function maybeStartWildEncounter(world: WorldState) {
+  world.encounterSteps += 1;
+  if (world.encounterSteps < 3) return false;
+  const forced = world.encounterSteps >= 7;
+  if (!forced && nextEncounterRoll(world) >= 28) return false;
+  startEncounter(world, 'wild');
+  return true;
+}
+export function startEncounter(world: WorldState, source: EncounterSource = 'gate') {
+  if (source === 'gate' && world.encounterCleared) { world.message = 'The hollow is quiet here, but wild creatures still roam the trails.'; return; }
+  const variants: EncounterVariant[] = ['crossroads', 'slime-nest', 'bat-roost']; const variant = variants[(world.encounterSeed + world.encounterCount) % variants.length];
+  world.mode = 'battle'; world.navigation.moving = false; world.navigation.path = []; world.navigation.destination = null; world.lastRewards = null; world.activeEncounterSource = source; world.encounterSteps = 0;
+  world.battle = createTutorialBattle(world.activeCompanion, world.captureOrbs, variant);
+  world.message = source === 'wild' ? 'A wild encounter interrupts your journey!' : 'A territorial pair blocks the path. Win the battle or capture the creatures to bring its reward home.';
+}
 export function upgradeTown(world: WorldState) { if (world.townLevel >= 2 || world.materials < 3) return; world.materials -= 3; world.townLevel = 2; world.message = 'The field workshop is open. Future expeditions can turn rare materials into team upgrades.'; }
-export function completeBattle(world: WorldState) { const battle = world.battle; if (!battle || world.lastRewards || battle.winner !== 'player') return; world.encounterCleared = true; world.materials += 2; world.teamXp += battle.rewards.xp; world.captureOrbs = battle.captureOrbs; for (const captured of battle.rewards.captured) if (!world.capturedRoster.includes(captured)) world.capturedRoster.push(captured); for (const loot of battle.rewards.loot) { const existing = world.lootInventory.find((entry) => entry.id === loot.id); if (existing) existing.quantity += loot.quantity; else world.lootInventory.push({ ...loot }); } const summary: RewardSummary = { ...battle.rewards, loot: battle.rewards.loot.map((loot) => ({ ...loot })), outcome: 'victory', remainingOrbs: world.captureOrbs }; world.lastRewards = summary; world.battleRewardHistory.push(summary); world.mode = 'rewards'; world.message = 'The encounter is complete. Review the expedition rewards before heading home.'; }
+export function completeBattle(world: WorldState) { const battle = world.battle; if (!battle || world.lastRewards || battle.winner !== 'player') return; if (world.activeEncounterSource === 'gate') world.encounterCleared = true; world.encounterCount += 1; world.materials += 2; world.teamXp += battle.rewards.xp; world.captureOrbs = battle.captureOrbs; for (const captured of battle.rewards.captured) if (!world.capturedRoster.includes(captured)) world.capturedRoster.push(captured); for (const loot of battle.rewards.loot) { const existing = world.lootInventory.find((entry) => entry.id === loot.id); if (existing) existing.quantity += loot.quantity; else world.lootInventory.push({ ...loot }); } const summary: RewardSummary = { ...battle.rewards, loot: battle.rewards.loot.map((loot) => ({ ...loot })), outcome: 'victory', remainingOrbs: world.captureOrbs }; world.lastRewards = summary; world.battleRewardHistory.push(summary); world.mode = 'rewards'; world.message = 'The encounter is complete. Review the expedition rewards before heading home.'; }

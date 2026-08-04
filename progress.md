@@ -56,3 +56,9 @@ Manual editor follow-up
 - Replaced the malformed per-frame Guardian overworld walk assets with a new four-frame, bottom-center normalized transparent sprite sheet based on the approved standing Guardian.
 - Refactored overworld movement presentation so the mounted Guardian sprite advances through a CSS walk strip while only its position updates during navigation; the full scene no longer rerenders every animation tick.
 - Per user direction, no browser verification, automated tests, or builds were run for this change. The next owner should validate the walk strip visually before publishing.
+
+2026-08-04
+- Added a cache-busting release token for public assets so Pages cannot reuse the previous white-matte Guardian walk image after deployment.
+- Added repeatable, movement-driven wild encounters in Moss Hollow, with a persisted encounter meter, deterministic RNG, a minimum of three movement steps, and a guaranteed encounter by step seven.
+- Added three encounter variants and made captured Moss Slime and Cave Bat selectable battle companions with distinct tank/support and mobile ranged roles.
+- Added focused unit coverage for repeat encounters and captured companion battle stats. Per user direction, no test, browser, or build command was run for this feature pass.
