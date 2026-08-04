@@ -12,6 +12,7 @@ export interface WorldState {
   teamXp: number; capturedRoster: string[]; captureOrbs: number; lootInventory: Loot[]; battleRewardHistory: RewardSummary[]; lastRewards: RewardSummary | null;
   navigation: NavigationState;
 }
+export const WORLD_SAVE_KEY = 'journeygame-web-spike-save-v1';
 const townInteractables: WorldInteractable[] = [{ id: 'trail', label: 'Moss Hollow trail', position: { x: 6, y: 2 }, action: 'explore' }];
 const exploreInteractables: WorldInteractable[] = [{ id: 'mossling', label: 'Mossling clearing', position: { x: 1, y: 1 }, action: 'discover' }, { id: 'moonstone', label: 'Moonstone vein', position: { x: 4, y: 1 }, action: 'collect' }, { id: 'encounter', label: 'Encounter gate', position: { x: 6, y: 3 }, action: 'encounter' }];
 const blocked = [{ x: 0, y: 5 }, { x: 7, y: 0 }];
@@ -19,6 +20,23 @@ const key = (point: Point) => `${point.x},${point.y}`;
 const same = (a: Point, b: Point) => a.x === b.x && a.y === b.y;
 const inside = (navigation: NavigationState, point: Point) => point.x >= 0 && point.y >= 0 && point.x < navigation.width && point.y < navigation.height;
 export function createWorld(): WorldState { return { mode: 'town', townLevel: 1, materials: 0, discovered: ['Guardian'], activeCompanion: 'Scout', hasAcceptedRequest: false, resourceCollected: false, encounterCleared: false, battle: null, message: 'Choose a destination in Hearthglen.', teamXp: 0, capturedRoster: [], captureOrbs: 3, lootInventory: [], battleRewardHistory: [], lastRewards: null, navigation: { width: 8, height: 6, player: { x: 2, y: 4 }, destination: null, path: [], blocked, focused: null, moving: false } }; }
+export function restoreWorld(saved: string | null): WorldState {
+  const fresh = createWorld();
+  if (!saved) return fresh;
+  try {
+    const parsed = JSON.parse(saved) as Partial<WorldState>;
+    if (!parsed || !['town', 'explore', 'battle', 'rewards'].includes(parsed.mode ?? '')) return fresh;
+    return {
+      ...fresh,
+      ...parsed,
+      discovered: Array.isArray(parsed.discovered) ? parsed.discovered : fresh.discovered,
+      capturedRoster: Array.isArray(parsed.capturedRoster) ? parsed.capturedRoster : [],
+      lootInventory: Array.isArray(parsed.lootInventory) ? parsed.lootInventory : [],
+      battleRewardHistory: Array.isArray(parsed.battleRewardHistory) ? parsed.battleRewardHistory : [],
+      navigation: { ...fresh.navigation, ...parsed.navigation, blocked: Array.isArray(parsed.navigation?.blocked) ? parsed.navigation.blocked : fresh.navigation.blocked },
+    };
+  } catch { return fresh; }
+}
 export function interactables(world: WorldState) { return world.mode === 'town' ? townInteractables : world.mode === 'explore' ? exploreInteractables.filter((item) => (item.id !== 'mossling' || !world.discovered.includes('Mossling')) && (item.id !== 'moonstone' || !world.resourceCollected) && (item.id !== 'encounter' || !world.encounterCleared)) : []; }
 function pathTo(navigation: NavigationState, destination: Point) {
   const queue: Point[] = [navigation.player]; const previous = new Map<string, Point | null>([[key(navigation.player), null]]); const blockedSet = new Set(navigation.blocked.map(key));

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { collectResource, completeBattle, createWorld, discoverCompanion, enterExplore, setActiveCompanion, startEncounter, upgradeTown } from '../src/world.ts';
+import { collectResource, completeBattle, createWorld, discoverCompanion, enterExplore, restoreWorld, setActiveCompanion, startEncounter, upgradeTown } from '../src/world.ts';
 
 test('the vertical slice connects town, exploration, discovery, and resources', () => {
   const world = createWorld();
@@ -50,4 +50,16 @@ test('a discovered companion can be selected for the next encounter', () => {
   startEncounter(world);
   assert.equal(world.battle?.units.some((unit) => unit.id === 'mossling'), true);
   assert.equal(world.battle?.units.some((unit) => unit.id === 'scout'), false);
+});
+
+test('saved progression restores after a browser refresh and malformed saves fall back safely', () => {
+  const world = createWorld();
+  collectResource(world);
+  discoverCompanion(world);
+  world.teamXp = 12;
+  const restored = restoreWorld(JSON.stringify(world));
+  assert.equal(restored.materials, 3);
+  assert.deepEqual(restored.discovered, ['Guardian', 'Mossling']);
+  assert.equal(restored.teamXp, 12);
+  assert.equal(restoreWorld('{bad json').mode, 'town');
 });

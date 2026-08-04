@@ -1,10 +1,10 @@
 import { activeUnit, attack, capture, captureChance, defend, endTurn, isCoverTile, isDifficultTile, mend, move, previewAttackDamage, setCommand, useFocus, validAttackTargets, validCaptureTargets, validMendTargets, validMoveTiles, type BattleState, type CommandType, type Tile, type Unit } from './battle';
-import { advanceNavigation, completeBattle, createWorld, interactFocused, interactables, moveToInteractable, returnToTown, setActiveCompanion, upgradeTown, setDestination, type Point } from './world';
+import { advanceNavigation, completeBattle, interactFocused, interactables, moveToInteractable, restoreWorld, returnToTown, setActiveCompanion, upgradeTown, setDestination, WORLD_SAVE_KEY, type Point } from './world';
 import './style.css';
 
 declare global { interface Window { render_game_to_text: () => string; advanceTime: (ms: number) => void; } }
 
-const world = createWorld();
+const world = restoreWorld(window.localStorage.getItem(WORLD_SAVE_KEY));
 const app = document.querySelector<HTMLDivElement>('#app')!;
 const gridUnit = 100 / 14;
 // Public assets are not fingerprinted by Vite. Keep this release token in the URL so a
@@ -12,8 +12,7 @@ const gridUnit = 100 / 14;
 const asset = (path: string) => `${import.meta.env.BASE_URL}assets/${path}?v=20260804`;
 document.documentElement.style.setProperty('--ui-chrome', `url("${asset('ui/painterly-ui-chrome.png')}")`);
 document.documentElement.style.setProperty('--reward-background', `url("${asset('world/hearthglen-bg.png')}")`);
-const animationFor: Record<string, string> = { guardian: 'guardian', mossling: 'companion', scout: 'scout', slime: 'enemy-slime', bat: 'enemy-bat' };
-const spriteSource: Record<string, string> = { guardian: asset('battle/battle-sprite-guardian.png'), mossling: asset('battle/battle-sprite-companion.png'), scout: asset('battle/battle-sprite-scout.png'), slime: asset('battle/battle-sprite-enemy-slime.png'), bat: asset('battle/battle-sprite-enemy-bat.png') };
+const animationSource: Record<string, string> = { guardian: asset('battle/animation/guardian-idle.png'), mossling: asset('battle/animation/mossling-idle.png'), scout: asset('battle/animation/scout-idle.png'), slime: asset('battle/animation/slime-idle.png'), bat: asset('battle/animation/bat-idle.png') };
 type CueKind = 'impact' | 'mend' | 'moonstone' | 'discovery' | 'upgrade' | 'move' | 'victory';
 interface Cue { id: number; kind: CueKind; unitId?: string; targetId?: string; }
 let cue: Cue | null = null;
@@ -27,6 +26,7 @@ function showCue(kind: CueKind, unitId?: string, targetId?: string) {
   const next = { id: ++cueSequence, kind, unitId, targetId }; cue = next;
   window.setTimeout(() => { if (cue?.id === next.id) { cue = null; render(); } }, kind === 'victory' ? 1200 : 680);
 }
+function persistWorld() { window.localStorage.setItem(WORLD_SAVE_KEY, JSON.stringify(world)); }
 function modeTitle() { return world.mode === 'town' ? 'Hearthglen' : world.mode === 'explore' ? 'Moss Hollow' : world.mode === 'rewards' ? 'Expedition complete' : 'First light at Moss Hollow'; }
 function escapeHtml(value: string) { return value.replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[character]!)); }
 function unitPosition(unit: Unit) { return { left: (5 + unit.x - unit.y) * gridUnit + gridUnit, top: (unit.x + unit.y) * gridUnit + gridUnit }; }
@@ -85,7 +85,7 @@ function renderBattleStage() {
     const stateText = `${unit.moved ? 'Move ✓' : `Move ${unit.moveRange}`} · ${unit.actionUsed ? 'Action ✓' : unit.defending ? 'Defending' : 'Action ready'} · ${unit.bonusUsed ? 'Bonus ✓' : unit.bonusAbility ? 'Bonus ready' : 'No bonus'}`;
     const captureText = unit.team === 'enemy' ? `<em class="capture-readout ${captureChance(unit) ? 'ready' : ''}">${captureChance(unit) ? `Capture ${captureChance(unit)}%` : `${Math.ceil(unit.maxHp * .35)} HP to capture`}</em>` : '';
     const attackText = unit.team === 'enemy' && current?.team === 'player' && validAttackTargets(state).some((target) => target.id === unit.id) ? `<em class="attack-readout">Hit ${previewAttackDamage(state, unit)}</em>` : '';
-    return `<button class="battle-unit ${unit.team} ${current?.id === unit.id ? 'active' : ''} ${cueClass}" data-unit="${unit.id}" style="left:${point.left}%;top:${point.top}%" aria-label="${escapeHtml(unit.name)}, ${unit.hp} of ${unit.maxHp} health, ${stateText}"><i class="turn-diamond"></i><img class="sprite-animated sprite-${animationFor[unit.id]}" src="${spriteSource[unit.id]}" alt=""><div class="health"><i style="width:${hp}%"></i></div><span>${escapeHtml(unit.name)}</span><small>${stateText}</small>${attackText}${captureText}</button>`;
+    return `<button class="battle-unit ${unit.team} ${current?.id === unit.id ? 'active' : ''} ${cueClass}" data-unit="${unit.id}" style="left:${point.left}%;top:${point.top}%" aria-label="${escapeHtml(unit.name)}, ${unit.hp} of ${unit.maxHp} health, ${stateText}"><i class="turn-diamond"></i><span class="sprite-animated" style="--sprite:url('${animationSource[unit.id]}')" aria-hidden="true"></span><div class="health"><i style="width:${hp}%"></i></div><span>${escapeHtml(unit.name)}</span><small>${stateText}</small>${attackText}${captureText}</button>`;
   }).join('');
   const target = cue?.targetId ? state.units.find((unit) => unit.id === cue?.targetId) : undefined; const cuePoint = target ? unitPosition(target) : undefined;
   const battleCue = cue?.kind === 'impact' && cuePoint ? `<img class="battle-cue impact-cue" src="${asset('effects/impact.png')}" alt="" style="left:${cuePoint.left}%;top:${cuePoint.top}%">` : cue?.kind === 'mend' && cuePoint ? `<img class="battle-cue mend-cue" src="${asset('effects/mend.png')}" alt="" style="left:${cuePoint.left}%;top:${cuePoint.top}%">` : cue?.kind === 'victory' ? '<div class="victory-glow"></div>' : '';
@@ -109,6 +109,7 @@ function renderSidebar() {
   return `<aside class="battle-sidebar">${panel(`<h2>Tactics</h2>${renderActions()}`, 'tactics')}${panel(`<h2>Battle log</h2>${events}`, 'battle-log')}</aside>`;
 }
 function render() {
+  persistWorld();
   const state = world.battle; const mode = world.mode === 'battle' ? `${activeUnit(state!)?.name ?? '—'} · ROUND ${state?.round ?? 1}` : world.mode.toUpperCase(); const stage = world.mode === 'town' ? renderTownStage() : world.mode === 'explore' ? renderExploreStage() : world.mode === 'rewards' ? renderRewardsStage() : renderBattleStage();
   app.innerHTML = `<section class="shell ${world.mode === 'battle' ? 'battle-shell' : ''}"><header><div><span class="kicker">JOURNEYGAME · VERTICAL SLICE</span><h1>${modeTitle()}</h1><p>${escapeHtml(world.message)}</p></div><div class="status"><strong>${mode}</strong><span><i></i>${world.materials} MOONSTONE</span></div></header><div class="layout"><main class="stage ${world.mode}">${stage}</main>${renderSidebar()}</div></section>`;
   bindInteractions();
