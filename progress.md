@@ -51,3 +51,8 @@ Manual editor follow-up
 2026-08-03
 - Static GitHub Pages review: the web spike had no Vite base configuration and used root-relative `/assets/...` references, which are incompatible with the repository subpath `/Journey-Game-/`.
 - Added `vite.config.ts` with a Pages base path toggle, a `build:pages` script, and centralized runtime asset URLs on `import.meta.env.BASE_URL`; CSS-only URLs now use base-aware runtime variables. No build, deployment, or test command was run in this review pass.
+
+2026-08-04
+- Replaced the malformed per-frame Guardian overworld walk assets with a new four-frame, bottom-center normalized transparent sprite sheet based on the approved standing Guardian.
+- Refactored overworld movement presentation so the mounted Guardian sprite advances through a CSS walk strip while only its position updates during navigation; the full scene no longer rerenders every animation tick.
+- Per user direction, no browser verification, automated tests, or builds were run for this change. The next owner should validate the walk strip visually before publishing.
