@@ -9,7 +9,7 @@ const app = document.querySelector<HTMLDivElement>('#app')!;
 const gridUnit = 100 / 14;
 // Public assets are not fingerprinted by Vite. Keep this release token in the URL so a
 // previously cached Pages 404 cannot survive after an asset-only deployment.
-const asset = (path: string) => `${import.meta.env.BASE_URL}assets/${path}?v=20260804c`;
+const asset = (path: string) => `${import.meta.env.BASE_URL}assets/${path}?v=20260804d`;
 document.documentElement.style.setProperty('--ui-chrome', `url("${asset('ui/painterly-ui-chrome.png')}")`);
 document.documentElement.style.setProperty('--reward-background', `url("${asset('world/hearthglen-bg.png')}")`);
 const animationSource: Record<string, string> = { guardian: asset('battle/battle-sprite-guardian.png'), mossling: asset('battle/battle-sprite-companion.png'), scout: asset('battle/battle-sprite-scout.png'), slime: asset('battle/battle-sprite-enemy-slime.png'), bat: asset('battle/battle-sprite-enemy-bat.png') };
@@ -69,7 +69,7 @@ async function requestLandscape() {
 
 function renderNavigationLayer() {
   const nav = world.navigation;
-  const player = `<div class="world-player ${nav.moving ? 'walking' : 'idle'} facing-${nav.facing}" style="${pointStyle(nav.visualPlayer, nav)}" aria-label="Guardian party avatar, ${nav.moving ? 'walking' : 'standing'}"><i class="world-player-shadow"></i><span class="world-player-sprite" style="--idle-sprite:url('${asset('battle/battle-sprite-guardian.png')}');--walk-sprite:url('${asset('world/guardian-walk-strip.png')}')" aria-hidden="true"></span></div>`;
+  const player = `<div class="world-player ${nav.moving ? 'walking' : 'idle'} facing-${nav.facing}" style="${pointStyle(nav.visualPlayer, nav)}" aria-label="Guardian party avatar, ${nav.moving ? `walking ${nav.facing}` : 'standing'}"><i class="world-player-shadow"></i><span class="world-player-direction"><span class="world-player-sprite" style="--idle-sprite:url('${asset('battle/battle-sprite-guardian.png')}')" aria-hidden="true"></span></span></div>`;
   const destination = nav.destination ? `<div class="destination-marker" style="${pointStyle(nav.destination, nav)}" aria-label="Destination"></div>` : '';
   return `<div class="world-navigation"><button class="world-map-input" data-world-map aria-label="Choose a safe place for Guardian to walk">Move Guardian</button>${destination}${player}</div>`;
 }

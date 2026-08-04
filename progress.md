@@ -62,3 +62,7 @@ Manual editor follow-up
 - Added repeatable, movement-driven wild encounters in Moss Hollow, with a persisted encounter meter, deterministic RNG, a minimum of three movement steps, and a guaranteed encounter by step seven.
 - Added three encounter variants and made captured Moss Slime and Cave Bat selectable battle companions with distinct tank/support and mobile ranged roles.
 - Added focused unit coverage for repeat encounters and captured companion battle stats. Per user direction, no test, browser, or build command was run for this feature pass.
+
+2026-08-04
+- Replaced the unreliable generated walk-strip rendering path with the approved full-size transparent Guardian art plus a directional stride animation; the parent facing layer now mirrors cleanly for left travel.
+- Converted desktop gameplay UI into playfield-edge overlays: exploration panels no longer reserve a sidebar column, battle controls and log sit at opposite lower edges, and battle units are reduced to tactical scale.
