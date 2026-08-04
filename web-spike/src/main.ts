@@ -1,155 +1,174 @@
-import Phaser from 'phaser';
-import { activeUnit, attack, endTurn, mend, move, setCommand } from './battle';
-import { collectResource, completeBattle, createWorld, discoverCompanion, enterExplore, returnToTown, setActiveCompanion, startEncounter, upgradeTown, type WorldState } from './world';
+import { activeUnit, attack, capture, captureChance, defend, endTurn, isCoverTile, isDifficultTile, mend, move, previewAttackDamage, setCommand, useFocus, validAttackTargets, validCaptureTargets, validMendTargets, validMoveTiles, type BattleState, type CommandType, type Tile, type Unit } from './battle';
+import { advanceNavigation, completeBattle, createWorld, interactFocused, interactables, moveToInteractable, returnToTown, setActiveCompanion, upgradeTown, setDestination, type Point } from './world';
 import './style.css';
 
+declare global { interface Window { render_game_to_text: () => string; advanceTime: (ms: number) => void; } }
+
 const world = createWorld();
-const boardWidth = 800;
-const boardHeight = 500;
-const cell = 64;
+const app = document.querySelector<HTMLDivElement>('#app')!;
+const gridUnit = 100 / 14;
+const asset = (path: string) => `${import.meta.env.BASE_URL}assets/${path}`;
+document.documentElement.style.setProperty('--ui-chrome', `url("${asset('ui/painterly-ui-chrome.png')}")`);
+document.documentElement.style.setProperty('--reward-background', `url("${asset('world/hearthglen-bg.png')}")`);
+const animationFor: Record<string, string> = { guardian: 'guardian', mossling: 'companion', scout: 'scout', slime: 'enemy-slime', bat: 'enemy-bat' };
+const spriteSource: Record<string, string> = { guardian: asset('battle/battle-sprite-guardian.png'), mossling: asset('battle/battle-sprite-companion.png'), scout: asset('battle/battle-sprite-scout.png'), slime: asset('battle/battle-sprite-enemy-slime.png'), bat: asset('battle/battle-sprite-enemy-bat.png') };
+type CueKind = 'impact' | 'mend' | 'moonstone' | 'discovery' | 'upgrade' | 'move' | 'victory';
+interface Cue { id: number; kind: CueKind; unitId?: string; targetId?: string; }
+let cue: Cue | null = null;
+let cueSequence = 0;
+let feedback = '';
+let selectedTile: Tile | null = null;
+let portraitDismissed = false;
+let pendingCaptureId: string | null = null;
 
-class JourneyScene extends Phaser.Scene {
-  private board!: Phaser.GameObjects.Graphics;
-  private labels: Phaser.GameObjects.Text[] = [];
-  private townBackdrop!: Phaser.GameObjects.Image;
+function showCue(kind: CueKind, unitId?: string, targetId?: string) {
+  const next = { id: ++cueSequence, kind, unitId, targetId }; cue = next;
+  window.setTimeout(() => { if (cue?.id === next.id) { cue = null; render(); } }, kind === 'victory' ? 1200 : 680);
+}
+function modeTitle() { return world.mode === 'town' ? 'Hearthglen' : world.mode === 'explore' ? 'Moss Hollow' : world.mode === 'rewards' ? 'Expedition complete' : 'First light at Moss Hollow'; }
+function escapeHtml(value: string) { return value.replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[character]!)); }
+function unitPosition(unit: Unit) { return { left: (5 + unit.x - unit.y) * gridUnit + gridUnit, top: (unit.x + unit.y) * gridUnit + gridUnit }; }
+function tileKey(tile: Tile) { return `${tile.x},${tile.y}`; }
+function isPortraitBattle() { return world.mode === 'battle' && window.innerHeight > window.innerWidth && !portraitDismissed; }
+function commandLabel(command: CommandType) { return command === 'none' ? 'Choose an action' : command === 'mend' ? 'Select an injured ally' : command === 'attack' ? 'Select a nearby enemy' : command === 'capture' ? 'Select a weakened enemy to capture' : 'Select a destination'; }
 
-  constructor() { super('journey'); }
+function settleVictory() { if (world.battle?.winner === 'player' && !world.encounterCleared) { completeBattle(world); showCue('victory'); feedback = 'Victory confirmed — return to Hearthglen for your reward.'; } }
+function setFeedbackFromEvent(state: BattleState, fallback: string) { feedback = state.events[0]?.message ?? fallback; }
+function resetBattleSelection() { selectedTile = activeUnit(world.battle!) ? { x: activeUnit(world.battle!)!.x, y: activeUnit(world.battle!)!.y } : null; }
+let navigationTimer: number | null = null;
+function stopNavigationTimer() { if (navigationTimer !== null) { window.clearTimeout(navigationTimer); navigationTimer = null; } }
+function runNavigation() { stopNavigationTimer(); if (!world.navigation.moving) { render(); return; } navigationTimer = window.setTimeout(() => { advanceNavigation(world); render(); if (world.navigation.moving) runNavigation(); }, 150); }
+function chooseDestination(point: Point) { if (setDestination(world, point)) runNavigation(); else render(); }
 
-  preload() {
-    this.load.image('hearthglen-backdrop', '/assets/hearthglen-moss-hollow-concept.png');
-  }
-
-  create() {
-    this.townBackdrop = this.add.image(boardWidth / 2, boardHeight / 2, 'hearthglen-backdrop').setDisplaySize(boardWidth, boardHeight).setAlpha(0.72);
-    this.board = this.add.graphics();
-    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => this.handleCanvasClick(pointer.x, pointer.y));
-    this.render();
-  }
-
-  update() { this.render(); }
-
-  private handleCanvasClick(x: number, y: number) {
-    if (world.mode === 'town') {
-      if (x > 70 && x < 260 && y > 230 && y < 350) enterExplore(world);
-    } else if (world.mode === 'explore') {
-      if (!world.resourceCollected && x > 430 && x < 560 && y > 90 && y < 220) collectResource(world);
-      else if (!world.discovered.includes('Mossling') && x > 100 && x < 240 && y > 90 && y < 220) discoverCompanion(world);
-      else if (x > 570 && x < 760 && y > 270 && y < 430) startEncounter(world);
-    } else if (world.mode === 'battle') {
-      const state = world.battle;
-      if (!state || state.winner) return;
-      const gridX = Math.round((x - 48) / cell);
-      const gridY = Math.round((y - 42) / cell);
-      if (state.command === 'move' && move(state, gridX, gridY)) {
-        renderHud(world);
-        return;
-      }
-      const target = state.units.find((unit) => {
-        const px = 48 + unit.x * cell;
-        const py = 42 + unit.y * cell;
-        return unit.team === 'enemy' && unit.hp > 0 && Math.abs(x - px) < 25 && Math.abs(y - py) < 25;
-      });
-      if (target) attack(state, target.id);
-      if (state.winner === 'player') completeBattle(world);
-    }
-    renderHud(world);
-  }
-
-  private render() {
-    this.board.clear();
-    this.labels.forEach((label) => label.destroy());
-    this.labels = [];
-    this.townBackdrop.setVisible(world.mode === 'town');
-    if (world.mode === 'town') this.renderTown();
-    else if (world.mode === 'explore') this.renderExplore();
-    else this.renderBattle();
-  }
-
-  private renderTown() {
-    this.board.fillStyle(0x061316, 0.25).fillRect(0, 0, boardWidth, boardHeight);
-    this.board.fillStyle(0x10292a, 0.78).fillRoundedRect(25, 378, 300, 87, 10);
-    this.board.fillStyle(0x10292a, 0.78).fillRoundedRect(455, 378, 320, 87, 10);
-    this.addLabel(45, 398, 'HEARTHGLEN HOME', '#f7d488');
-    this.addLabel(45, 422, 'A safe return after every expedition.', '#d6ece0');
-    this.addLabel(475, 398, world.townLevel >= 2 ? 'FIELD WORKSHOP OPEN' : 'WORKSHOP LOT', '#f7d488');
-    this.addLabel(475, 422, world.townLevel >= 2 ? 'Materials can now strengthen your team.' : 'Bring Moonstone home to begin.', '#d6ece0');
-  }
-
-  private renderExplore() {
-    this.board.fillStyle(0x1b3a43).fillRect(0, 0, boardWidth, boardHeight);
-    this.board.fillStyle(0x2d5a4b).fillRect(0, 320, boardWidth, 180);
-    for (let i = 0; i < 10; i += 1) {
-      this.board.fillStyle(i % 2 ? 0x46745b : 0x3b684f).fillCircle(44 + i * 82, 350 + (i % 3) * 42, 26);
-    }
-    if (!world.discovered.includes('Mossling')) {
-      this.board.fillStyle(0x78c8a4).fillCircle(164, 145, 28);
-      this.addLabel(123, 190, 'Mossling?', '#b9f2c5');
-    }
-    if (!world.resourceCollected) {
-      this.board.fillStyle(0x85d7da).fillCircle(494, 150, 30);
-      this.board.fillStyle(0xdafcff).fillCircle(482, 140, 7);
-      this.addLabel(437, 194, 'MOONSTONE', '#b9f2c5');
-    }
-    this.board.fillStyle(0x8f5c54).fillRect(625, 300, 120, 110);
-    this.board.fillStyle(0xf1c37a).fillTriangle(612, 300, 758, 300, 685, 246);
-    this.addLabel(624, 430, world.encounterCleared ? 'CLEARED PATH' : 'ENCOUNTER', '#f7d488');
-  }
-
-  private renderBattle() {
-    this.board.fillStyle(0x101a24).fillRect(0, 0, boardWidth, boardHeight);
-    for (let y = 0; y < 6; y += 1) for (let x = 0; x < 8; x += 1) {
-      this.board.lineStyle(1, 0x33465a, 0.8).strokeRect(48 + x * cell, 42 + y * cell, cell, cell);
-    }
-    const state = world.battle;
-    if (!state) return;
-    const current = activeUnit(state);
-    if (state.command === 'move' && current?.team === 'player') {
-      [[current.x + 1, current.y], [current.x - 1, current.y], [current.x, current.y + 1], [current.x, current.y - 1]].forEach(([x, y]) => {
-        const occupied = state.units.some((unit) => unit.hp > 0 && unit.x === x && unit.y === y);
-        if (!occupied && x >= 0 && x < 8 && y >= 0 && y < 6) this.board.fillStyle(0x55c2a3, 0.22).fillRect(48 + x * cell + 3, 42 + y * cell + 3, cell - 6, cell - 6);
-      });
-    }
-    state.units.forEach((unit) => {
-      if (unit.hp <= 0) return;
-      const px = 48 + unit.x * cell;
-      const py = 42 + unit.y * cell;
-      const color = unit.team === 'player' ? 0x55c2a3 : 0xe57777;
-      this.board.fillStyle(color, 0.92).fillCircle(px, py, 22);
-      if (activeUnit(state)?.id === unit.id) this.board.lineStyle(3, 0xf7d488).strokeCircle(px, py, 28);
-      this.board.fillStyle(0x15202b).fillRect(px - 22, py + 29, 44, 5);
-      this.board.fillStyle(0xf7d488).fillRect(px - 22, py + 29, 44 * unit.hp / unit.maxHp, 5);
-      this.addLabel(px - 16, py - 8, unit.name.slice(0, 2), '#071117');
-    });
-  }
-
-  private addLabel(x: number, y: number, text: string, color: string) {
-    this.labels.push(this.add.text(x, y, text, { fontFamily: 'monospace', fontSize: '13px', color, fontStyle: 'bold' }));
-  }
+async function requestLandscape() {
+  if (world.mode !== 'battle') return;
+  try { await (screen.orientation as ScreenOrientation & { lock?: (orientation: string) => Promise<void> }).lock?.('landscape'); } catch { /* portrait overlay remains available when the browser rejects a lock. */ }
 }
 
-function renderHud(current: WorldState) {
-  const state = current.battle;
-  const title = current.mode === 'town' ? 'Hearthglen' : current.mode === 'explore' ? 'Moss Hollow' : 'First light at Moss Hollow';
-  document.querySelector<HTMLHeadingElement>('#title')!.textContent = title;
-  document.querySelector<HTMLDivElement>('#mode')!.textContent = current.mode === 'battle' ? `${activeUnit(state!)?.name ?? '—'} · ROUND ${state?.round ?? 1}` : current.mode.toUpperCase();
-  document.querySelector<HTMLDivElement>('#materials')!.textContent = `${current.materials} MOONSTONE`;
-  document.querySelector<HTMLDivElement>('#message')!.textContent = current.message;
-  document.querySelector<HTMLDivElement>('#discovered')!.textContent = current.discovered.join(' · ');
-  const actions = document.querySelector<HTMLDivElement>('#actions')!;
-  if (current.mode === 'town') actions.innerHTML = `<button id="explore">Set out for Moss Hollow</button>${current.discovered.includes('Mossling') ? `<button id="companion">Use ${current.activeCompanion === 'Mossling' ? 'Scout' : 'Mossling'} next</button>` : ''}<button id="upgrade" ${current.materials < 3 || current.townLevel >= 2 ? 'disabled' : ''}>${current.townLevel >= 2 ? 'Workshop open' : 'Build field workshop · 3 moonstone'}</button>`;
-  else if (current.mode === 'explore') actions.innerHTML = `<button id="return">Return to town</button><span class="hint">Click the Mossling, Moonstone, and encounter gate.</span>`;
-  else actions.innerHTML = `<button id="attack" ${state?.winner ? 'disabled' : ''}>Attack</button><button id="move" ${state?.winner ? 'disabled' : ''}>Move</button>${activeUnit(state!)?.ability === 'mend' ? `<button id="mend" ${state?.winner ? 'disabled' : ''}>Mend ally</button>` : ''}<button id="end-turn" ${state?.winner ? 'disabled' : ''}>End turn</button><button id="return" ${state?.winner ? '' : 'disabled'}>Return to town</button><span class="hint">${state?.command === 'move' ? 'Click a highlighted adjacent tile.' : 'Click an enemy on the board to attack.'}</span>`;
-  actions.querySelector('#explore')?.addEventListener('click', () => { enterExplore(current); renderHud(current); });
-  actions.querySelector('#companion')?.addEventListener('click', () => { setActiveCompanion(current, current.activeCompanion === 'Mossling' ? 'Scout' : 'Mossling'); renderHud(current); });
-  actions.querySelector('#upgrade')?.addEventListener('click', () => { upgradeTown(current); renderHud(current); });
-  actions.querySelector('#attack')?.addEventListener('click', () => { if (state) setCommand(state, 'attack'); renderHud(current); });
-  actions.querySelector('#move')?.addEventListener('click', () => { if (state) setCommand(state, 'move'); renderHud(current); });
-  actions.querySelector('#mend')?.addEventListener('click', () => { if (state) mend(state); renderHud(current); });
-  actions.querySelector('#return')?.addEventListener('click', () => { if (state?.winner === 'player') current.battle = null; returnToTown(current); renderHud(current); });
-  actions.querySelector('#end-turn')?.addEventListener('click', () => { if (state) { endTurn(state); if (state.winner === 'player') completeBattle(current); } renderHud(current); });
+function renderNavigationLayer() {
+  const nav = world.navigation;
+  const tiles = Array.from({ length: nav.width * nav.height }, (_, index) => { const x = index % nav.width; const y = Math.floor(index / nav.width); return `<button class="world-tile ${nav.blocked.some((tile) => tile.x === x && tile.y === y) ? 'blocked' : ''}" data-world-tile="${x},${y}" style="left:${x * 12.5}%;top:${y * (100 / nav.height)}%;width:12.5%;height:${100 / nav.height}%" aria-label="World tile ${x + 1}, ${y + 1}${nav.blocked.some((tile) => tile.x === x && tile.y === y) ? ', blocked' : ''}"></button>`; }).join('');
+  const player = `<div class="world-player" style="left:${(nav.player.x + .5) * 12.5}%;top:${(nav.player.y + .5) * (100 / nav.height)}%" aria-label="Party position"><span></span></div>`;
+  const destination = nav.destination ? `<div class="destination-marker" style="left:${(nav.destination.x + .5) * 12.5}%;top:${(nav.destination.y + .5) * (100 / nav.height)}%" aria-label="Destination"></div>` : '';
+  return `<div class="world-navigation">${tiles}${destination}${player}</div>`;
+}
+function renderTownStage() {
+  const workshopOpen = world.townLevel >= 2;
+  return `<div class="town-stage"><img class="world-bg" src="${asset('world/hearthglen-bg.png')}" alt="Hearthglen village"><img class="town-building home-building" src="${asset('world/hearthglen-home.png')}" alt="Hearthglen home"><img class="town-building workshop-building ${cue?.kind === 'upgrade' ? 'upgrade-reveal' : ''}" src="${asset(`world/${workshopOpen ? 'workshop-open' : 'workshop-closed'}.png`)}" alt="${workshopOpen ? 'Open field workshop' : 'Closed field workshop'}">${renderNavigationLayer()}<button class="world-interactable town-trail" data-interactable="trail"><span>TO MOSS HOLLOW</span></button>${cue?.kind === 'upgrade' ? `<div class="world-cue workshop-cue"><img src="${asset('effects/discovery.png')}" alt=""></div>` : ''}<div class="place-copy home-copy"><strong>HEARTHGLEN HOME</strong><span>A safe return after every expedition.</span></div><div class="place-copy workshop-copy"><strong>${workshopOpen ? 'FIELD WORKSHOP OPEN' : 'WORKSHOP LOT'}</strong><span>${workshopOpen ? 'Materials can now strengthen your team.' : 'Bring Moonstone home to begin.'}</span></div></div>`;
+}
+function renderExploreStage() {
+  const items = interactables(world);
+  return `<div class="explore-stage"><img class="world-bg" src="${asset('world/moss-hollow-bg.png')}" alt="Moss Hollow forest">${renderNavigationLayer()}${items.some((item) => item.id === 'mossling') ? `<button class="world-node mossling-node" data-interactable="mossling"><img src="${asset('world/mossling-node.png')}" alt="Mossling clearing"><span>MOSSLING?</span></button>` : ''}${items.some((item) => item.id === 'moonstone') ? `<button class="world-node moonstone-node" data-interactable="moonstone"><img src="${asset('world/moonstone-node.png')}" alt="Moonstone vein"><span>MOONSTONE</span></button>` : ''}${items.some((item) => item.id === 'encounter') ? `<button class="encounter-gate" data-interactable="encounter"><img src="${asset('world/encounter-gate.png')}" alt="Encounter gate"><span>ENCOUNTER</span></button>` : ''}${cue?.kind === 'discovery' ? `<div class="world-cue discovery-cue"><img src="${asset('effects/discovery.png')}" alt=""></div>` : ''}${cue?.kind === 'moonstone' ? `<div class="world-cue moonstone-cue"><img src="${asset('effects/moonstone.png')}" alt=""></div>` : ''}</div>`;
+}
+function renderRewardsStage() {
+  const reward = world.lastRewards!;
+  const loot = reward.loot.length ? reward.loot.map((item) => `<li>${escapeHtml(item.name)} ×${item.quantity}</li>`).join('') : '<li>No items recovered</li>';
+  const captured = reward.captured.length ? reward.captured.map(escapeHtml).join(', ') : 'None';
+  return `<div class="rewards-stage"><div class="rewards-card"><span class="kicker">FIRST EXPEDITION</span><h2>${reward.outcome === 'victory' ? 'Victory secured' : 'Expedition ended'}</h2><p>The road home carries new stories, materials, and possible companions.</p><div class="reward-grid"><div><strong>TEAM XP</strong><b>+${reward.xp}</b></div><div><strong>CAPTURE ORBS</strong><b>${reward.remainingOrbs}</b></div><div><strong>CAPTURED</strong><span>${captured}</span></div><div><strong>LOOT</strong><ul>${loot}</ul></div></div><button class="gold" data-action="return">Continue to Hearthglen</button></div></div>`;
 }
 
-document.querySelector<HTMLDivElement>('#app')!.innerHTML = `<section class="shell"><header><div><span class="kicker">JOURNEYGAME · VERTICAL SLICE</span><h1 id="title">Hearthglen</h1><p id="message"></p></div><div class="status"><div id="mode"></div><div id="materials"></div></div></header><div class="layout"><div id="game"></div><aside><div class="panel"><h2>Field notes</h2><div class="creatures" id="discovered"></div></div><div class="panel"><h2>What matters now</h2><div id="actions"></div></div></aside></div></section>`;
+function renderBattleStage() {
+  const state = world.battle!; const current = activeUnit(state);
+  const moves = new Set(validMoveTiles(state).map(tileKey));
+  const attacks = new Set(validAttackTargets(state).map((unit) => tileKey(unit)));
+  const heals = new Set(validMendTargets(state).map((unit) => tileKey(unit)));
+  const captures = new Set(validCaptureTargets(state).map((unit) => tileKey(unit)));
+  const tiles = Array.from({ length: state.grid.width * state.grid.height }, (_, index) => {
+    const x = index % state.grid.width; const y = Math.floor(index / state.grid.width); const point = { x, y }; const key = tileKey(point);
+    const classes = [moves.has(key) && state.command === 'move' ? 'reachable' : '', attacks.has(key) && state.command === 'attack' ? 'attackable' : '', heals.has(key) && state.command === 'mend' ? 'mendable' : '', captures.has(key) && state.command === 'capture' ? 'capturable' : '', isCoverTile(state, x, y) ? 'cover' : '', isDifficultTile(state, x, y) ? 'difficult' : '', selectedTile?.x === x && selectedTile?.y === y ? 'selected' : ''].filter(Boolean).join(' ');
+    return `<button class="battle-tile ${classes}" data-action="tile" data-tile="${key}" style="left:${(5 + x - y) * gridUnit}%;top:${(x + y) * gridUnit}%;width:${2 * gridUnit}%;height:${2 * gridUnit}%" aria-label="Tile ${x + 1}, ${y + 1}${isCoverTile(state, x, y) ? ', cover' : ''}${isDifficultTile(state, x, y) ? ', difficult terrain' : ''}"></button>`;
+  }).join('');
+  const units = state.units.filter((unit) => unit.hp > 0).map((unit) => {
+    const point = unitPosition(unit); const hp = Math.round((unit.hp / unit.maxHp) * 100); const cueClass = cue?.targetId === unit.id && cue.kind === 'impact' ? 'hit' : cue?.unitId === unit.id && cue.kind === 'move' ? 'move-arrive' : '';
+    const stateText = `${unit.moved ? 'Move ✓' : `Move ${unit.moveRange}`} · ${unit.actionUsed ? 'Action ✓' : unit.defending ? 'Defending' : 'Action ready'} · ${unit.bonusUsed ? 'Bonus ✓' : unit.bonusAbility ? 'Bonus ready' : 'No bonus'}`;
+    const captureText = unit.team === 'enemy' ? `<em class="capture-readout ${captureChance(unit) ? 'ready' : ''}">${captureChance(unit) ? `Capture ${captureChance(unit)}%` : `${Math.ceil(unit.maxHp * .35)} HP to capture`}</em>` : '';
+    const attackText = unit.team === 'enemy' && current?.team === 'player' && validAttackTargets(state).some((target) => target.id === unit.id) ? `<em class="attack-readout">Hit ${previewAttackDamage(state, unit)}</em>` : '';
+    return `<button class="battle-unit ${unit.team} ${current?.id === unit.id ? 'active' : ''} ${cueClass}" data-unit="${unit.id}" style="left:${point.left}%;top:${point.top}%" aria-label="${escapeHtml(unit.name)}, ${unit.hp} of ${unit.maxHp} health, ${stateText}"><i class="turn-diamond"></i><img class="sprite-animated sprite-${animationFor[unit.id]}" src="${spriteSource[unit.id]}" alt=""><div class="health"><i style="width:${hp}%"></i></div><span>${escapeHtml(unit.name)}</span><small>${stateText}</small>${attackText}${captureText}</button>`;
+  }).join('');
+  const target = cue?.targetId ? state.units.find((unit) => unit.id === cue?.targetId) : undefined; const cuePoint = target ? unitPosition(target) : undefined;
+  const battleCue = cue?.kind === 'impact' && cuePoint ? `<img class="battle-cue impact-cue" src="${asset('effects/impact.png')}" alt="" style="left:${cuePoint.left}%;top:${cuePoint.top}%">` : cue?.kind === 'mend' && cuePoint ? `<img class="battle-cue mend-cue" src="${asset('effects/mend.png')}" alt="" style="left:${cuePoint.left}%;top:${cuePoint.top}%">` : cue?.kind === 'victory' ? '<div class="victory-glow"></div>' : '';
+  return `<div class="battle-stage"><div class="turn-strip"><strong>${escapeHtml(current?.name ?? '—')}</strong><span>Initiative ${state.turnIndex + 1}/${state.units.length}</span><span>Round ${state.round}</span><span>${current?.moved ? 'Move used' : `Move ${current?.moveRange ?? 0}`}</span><span>${current?.actionUsed ? 'Action used' : current?.defending ? 'Defending' : 'Action ready'}</span><span>${current?.bonusUsed ? 'Bonus used' : current?.bonusAbility ? 'Bonus ready' : 'Reaction ready'}</span><span class="orb-count">◈ ${state.captureOrbs} Orbs</span></div><div class="battlefield"><img class="battlefield-bg" src="${asset('battle/battle-arena-bg.png')}" alt=""><img class="battle-prop left" src="${asset('battle/battle-prop-left.png')}" alt=""><img class="battle-prop right" src="${asset('battle/battle-prop-right.png')}" alt="">${tiles}${units}${battleCue}</div>${isPortraitBattle() ? '<div class="rotate-overlay" role="dialog" aria-label="Rotate for battle"><div><strong>Battle plays best in landscape</strong><span>Rotate your device for a wider tactical view.</span><button data-action="portrait-dismiss">Continue in portrait</button></div></div>' : ''}</div>`;
+}
 
-new Phaser.Game({ type: Phaser.AUTO, width: boardWidth, height: boardHeight, parent: 'game', backgroundColor: '#101a24', scene: JourneyScene, scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH } });
-renderHud(world);
+function actionButton(action: string, label: string, disabled: boolean, extra = '') { return `<button class="battle-action ${action}" data-action="${action}" ${disabled ? 'disabled' : ''}>${label}${extra ? `<small>${extra}</small>` : ''}</button>`; }
+function renderActions() {
+  if (world.mode === 'town' || world.mode === 'explore') { const canUpgrade = world.materials >= 3 && world.townLevel < 2; const focused = interactables(world).find((item) => item.id === world.navigation.focused); const roster = ['Scout', ...(world.discovered.includes('Mossling') ? ['Mossling'] : []), ...world.capturedRoster].map((name) => `<button data-action="choose-companion" data-companion="${name}" ${world.activeCompanion === name ? 'disabled' : ''}>Field ${escapeHtml(name)}${world.activeCompanion === name ? ' · active' : ''}</button>`).join(''); const navigation = `<p class="hint">${world.navigation.moving ? 'Walking… tap/click another tile to change destination.' : focused ? `At ${escapeHtml(focused.label)}.` : 'Click or tap a destination to walk there.'}</p>${focused ? `<button class="gold" data-action="interact">Interact · ${escapeHtml(focused.label)}</button>` : ''}`; if (world.mode === 'explore') return `${navigation}<button data-action="return">Return to town</button>`; return `${navigation}<div class="roster-actions">${roster}</div><button data-action="upgrade" ${canUpgrade ? '' : 'disabled'}>${world.townLevel >= 2 ? 'Workshop open' : 'Build field workshop · 3 moonstone'}</button>`; }
+  const state = world.battle!; const current = activeUnit(state); const hasAttack = validAttackTargets(state).length > 0; const hasMend = validMendTargets(state).length > 0; const hasCapture = validCaptureTargets(state).length > 0;
+  const actionDisabled = Boolean(state.winner || current?.actionUsed); const moveDisabled = Boolean(state.winner || current?.moved);
+  const reason = state.winner ? (state.winner === 'player' ? 'Battle won' : 'Battle lost') : feedback || commandLabel(state.command);
+  const capturePreview = hasCapture ? validCaptureTargets(state).map((unit) => `${unit.name} ${captureChance(unit)}%`).join(' · ') : state.captureOrbs ? 'Weaken an enemy below 35% HP.' : 'No Capture Orbs remaining.';
+  return `<div class="action-tray" aria-label="Battle actions">${actionButton('attack', '1 Attack', actionDisabled || !hasAttack, !hasAttack && !actionDisabled ? 'No target in range' : '')}${actionButton('move', '2 Move', moveDisabled, moveDisabled ? 'Already moved' : '')}${current?.ability === 'mend' ? actionButton('mend', '3 Mend', actionDisabled || !hasMend, !hasMend && !actionDisabled ? 'No ally to heal' : '') : ''}${actionButton('capture', '5 Capture', actionDisabled || !hasCapture, capturePreview)}${actionButton('defend', '4 Defend', actionDisabled, 'Reduce next hit')}${current?.bonusAbility === 'focus' ? actionButton('focus', 'B Focus', Boolean(current.bonusUsed), 'Bonus: +1 next hit') : ''}${actionButton('end', 'E End turn', Boolean(state.winner))}${state.command !== 'none' ? '<button class="battle-action cancel" data-action="cancel">Esc Cancel</button>' : ''}</div><p class="hint battle-hint" aria-live="polite">${escapeHtml(reason)}</p><button class="return-battle" data-action="return" ${state.winner ? '' : 'disabled'}>Return to town</button>`;
+}
+function panel(content: string, className = '') { return `<section class="panel ${className}"><img class="panel-frame" src="${asset('ui/painterly-ui-chrome.png')}" alt="">${content}</section>`; }
+function renderSidebar() {
+  if (world.mode === 'rewards') return `<aside>${panel(`<h2>Expedition record</h2><div class="notes"><span>${world.teamXp} team XP</span><span>${world.capturedRoster.length} captured</span><span>${world.lootInventory.length} loot types</span></div>`, 'field-notes')}${panel(`<h2>Next step</h2><p class="hint">Captured creatures are now visible in your field roster at Hearthglen.</p>`, 'actions')}</aside>`;
+  if (world.mode !== 'battle') return `<aside>${panel(`<h2>Field notes</h2><div class="notes">${world.discovered.map((name) => `<span>${escapeHtml(name)}</span>`).join('')}</div>`, 'field-notes')}${panel(`<h2>What matters now</h2>${renderActions()}`, 'actions')}</aside>`;
+  const events = world.battle!.events.map((event) => `<p class="event ${event.kind}">${escapeHtml(event.message)}</p>`).join('');
+  return `<aside class="battle-sidebar">${panel(`<h2>Tactics</h2>${renderActions()}`, 'tactics')}${panel(`<h2>Battle log</h2>${events}`, 'battle-log')}</aside>`;
+}
+function render() {
+  const state = world.battle; const mode = world.mode === 'battle' ? `${activeUnit(state!)?.name ?? '—'} · ROUND ${state?.round ?? 1}` : world.mode.toUpperCase(); const stage = world.mode === 'town' ? renderTownStage() : world.mode === 'explore' ? renderExploreStage() : world.mode === 'rewards' ? renderRewardsStage() : renderBattleStage();
+  app.innerHTML = `<section class="shell ${world.mode === 'battle' ? 'battle-shell' : ''}"><header><div><span class="kicker">JOURNEYGAME · VERTICAL SLICE</span><h1>${modeTitle()}</h1><p>${escapeHtml(world.message)}</p></div><div class="status"><strong>${mode}</strong><span><i></i>${world.materials} MOONSTONE</span></div></header><div class="layout"><main class="stage ${world.mode}">${stage}</main>${renderSidebar()}</div></section>`;
+  bindInteractions();
+}
+
+function onTileClick(x: number, y: number) {
+  const state = world.battle; if (!state || state.winner) return;
+  selectedTile = { x, y }; const mode = state.command; const occupant = state.units.find((unit) => unit.hp > 0 && unit.x === x && unit.y === y); let success = false;
+  if (mode === 'move' || (!occupant && validMoveTiles(state).some((tile) => tile.x === x && tile.y === y))) { const unit = activeUnit(state); success = move(state, x, y); if (success) showCue('move', unit?.id); }
+  if (mode === 'attack' && occupant) { success = attack(state, occupant.id); if (success) showCue('impact', undefined, occupant.id); }
+  if (mode === 'mend' && occupant) { const healer = activeUnit(state); success = mend(state, occupant.id); if (success) showCue('mend', healer?.id, occupant.id); }
+  if (mode === 'capture' && occupant) {
+    if (pendingCaptureId !== occupant.id) { pendingCaptureId = occupant.id; feedback = `Confirm Capture: ${occupant.name} has a ${captureChance(occupant)}% chance. Tap/click again to spend 1 Capture Orb.`; render(); return; }
+    const result = capture(state, occupant.id); pendingCaptureId = null; success = result.ok; feedback = result.reason; if (success) showCue('impact', undefined, occupant.id);
+  }
+  feedback = success ? (state.events[0]?.message ?? 'Action complete.') : mode === 'move' ? 'That destination is not reachable.' : 'That tile is not a valid target.'; settleVictory(); render();
+}
+function chooseMode(command: CommandType) { const state = world.battle; if (!state) return; pendingCaptureId = null; if (setCommand(state, command)) { resetBattleSelection(); feedback = commandLabel(command); } else feedback = command === 'attack' ? 'No enemy is in attack range.' : command === 'mend' ? 'No injured ally is in Mend range.' : command === 'capture' ? 'No weakened enemy is in capture range, or no orbs remain.' : 'That action is not available.'; render(); }
+function handleBattleAction(action: string) {
+  const state = world.battle!; if (action === 'attack' || action === 'move' || action === 'mend' || action === 'capture') { chooseMode(action); return; }
+  if (action === 'defend') { if (defend(state)) { showCue('mend', activeUnit(state)?.id, activeUnit(state)?.id); setFeedbackFromEvent(state, 'Defending.'); } else feedback = 'Action already used.'; }
+  if (action === 'focus') { if (useFocus(state)) setFeedbackFromEvent(state, 'Focused.'); else feedback = 'Bonus action already used.'; }
+  if (action === 'end') { endTurn(state); setFeedbackFromEvent(state, 'Turn ended.'); }
+  if (action === 'cancel') { state.command = 'none'; pendingCaptureId = null; feedback = 'Action cancelled.'; }
+  settleVictory(); render();
+}
+function bindInteractions() {
+  app.querySelectorAll<HTMLButtonElement>('[data-action]').forEach((button) => button.addEventListener('click', (event) => {
+    const action = button.dataset.action!; requestLandscape();
+    switch (action) {
+      case 'tile': { event.stopPropagation(); const [x, y] = button.dataset.tile!.split(',').map(Number); onTileClick(x, y); return; }
+      case 'companion': setActiveCompanion(world, world.activeCompanion === 'Mossling' ? 'Scout' : 'Mossling'); break;
+      case 'choose-companion': setActiveCompanion(world, button.dataset.companion as import('./world').CompanionName); break;
+      case 'upgrade': { const level = world.townLevel; upgradeTown(world); if (world.townLevel > level) showCue('upgrade'); break; }
+      case 'return': if (world.battle?.winner === 'player') world.battle = null; returnToTown(world); break;
+      case 'interact': { const before = world.mode; const focus = world.navigation.focused; interactFocused(world); if (focus === 'mossling') showCue('discovery'); if (focus === 'moonstone') showCue('moonstone'); if (world.mode === 'battle' && before !== 'battle') { resetBattleSelection(); portraitDismissed = false; } break; }
+      case 'portrait-dismiss': portraitDismissed = true; break;
+      default: if (world.mode === 'battle') { handleBattleAction(action); return; }
+    }
+    settleVictory(); render();
+  }));
+}
+function onKeyDown(event: KeyboardEvent) {
+  const state = world.battle; if (!state || state.winner || event.metaKey || event.ctrlKey || event.altKey) return;
+  const actionByKey: Record<string, string> = { '1': 'attack', '2': 'move', '3': 'mend', '4': 'defend', '5': 'capture', b: 'focus', e: 'end', Escape: 'cancel' };
+  if (actionByKey[event.key]) { event.preventDefault(); handleBattleAction(actionByKey[event.key]); return; }
+  const direction: Record<string, Tile> = { ArrowUp: { x: 0, y: -1 }, w: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 }, s: { x: 0, y: 1 }, ArrowLeft: { x: -1, y: 0 }, a: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 }, d: { x: 1, y: 0 } };
+  if (direction[event.key]) { event.preventDefault(); if (state.command !== 'move') { if (!setCommand(state, 'move')) { feedback = 'Movement is not available.'; render(); return; } resetBattleSelection(); } const delta = direction[event.key]; const base = selectedTile ?? { x: activeUnit(state)!.x, y: activeUnit(state)!.y }; selectedTile = { x: Math.max(0, Math.min(state.grid.width - 1, base.x + delta.x)), y: Math.max(0, Math.min(state.grid.height - 1, base.y + delta.y)) }; feedback = `Destination ${selectedTile.x + 1}, ${selectedTile.y + 1}. Press Enter to move.`; render(); return; }
+  if (event.key === 'Enter' && state.command === 'move' && selectedTile) { event.preventDefault(); onTileClick(selectedTile.x, selectedTile.y); }
+}
+app.addEventListener('click', (event) => {
+  const target = event.target as HTMLElement;
+  const battleTile = target.closest<HTMLElement>('[data-tile]');
+  if (battleTile) { const [x, y] = battleTile.dataset.tile!.split(',').map(Number); requestLandscape(); onTileClick(x, y); return; }
+  const unit = target.closest<HTMLElement>('[data-unit]');
+  if (unit) { const battleTarget = world.battle?.units.find((candidate) => candidate.id === unit.dataset.unit); if (!battleTarget || !world.battle) return; requestLandscape(); if (battleTarget.team === 'player') { if (battleTarget.id === activeUnit(world.battle)?.id) chooseMode('move'); else { feedback = `It is not ${battleTarget.name}'s turn.`; render(); } } else onTileClick(battleTarget.x, battleTarget.y); return; }
+  const worldTile = target.closest<HTMLElement>('[data-world-tile]');
+  if (worldTile) { const [x, y] = worldTile.dataset.worldTile!.split(',').map(Number); chooseDestination({ x, y }); return; }
+  const interactable = target.closest<HTMLElement>('[data-interactable]');
+  if (interactable) { if (moveToInteractable(world, interactable.dataset.interactable!)) runNavigation(); else render(); }
+});
+document.addEventListener('keydown', onKeyDown); window.addEventListener('resize', () => { if (world.mode === 'battle') render(); });
+render();
+window.render_game_to_text = () => JSON.stringify({ mode: world.mode, materials: world.materials, teamXp: world.teamXp, captureOrbs: world.captureOrbs, capturedRoster: world.capturedRoster, loot: world.lootInventory, rewards: world.lastRewards, companion: world.activeCompanion, feedback, navigation: world.mode === 'town' || world.mode === 'explore' ? { player: world.navigation.player, destination: world.navigation.destination, path: world.navigation.path, focused: world.navigation.focused, moving: world.navigation.moving, blocked: world.navigation.blocked } : null, portraitOverlay: isPortraitBattle(), battle: world.battle ? { active: activeUnit(world.battle)?.id, winner: world.battle.winner, round: world.battle.round, command: world.battle.command, selectedTile, cover: world.battle.coverTiles, difficult: world.battle.difficultTiles, captureOrbs: world.battle.captureOrbs, rewards: world.battle.rewards, units: world.battle.units.filter((unit) => unit.hp > 0).map((unit) => ({ id: unit.id, team: unit.team, hp: unit.hp, x: unit.x, y: unit.y, moved: unit.moved, actionUsed: unit.actionUsed, bonusUsed: unit.bonusUsed, reactionReady: unit.reactionReady, defending: unit.defending, captureChance: unit.team === 'enemy' ? captureChance(unit) : 0 })), valid: { move: validMoveTiles(world.battle).map(tileKey), attack: validAttackTargets(world.battle).map((unit) => unit.id), mend: validMendTargets(world.battle).map((unit) => unit.id), capture: validCaptureTargets(world.battle).map((unit) => unit.id) } } : null, coordinateSystem: 'World and battle grids use upper-left origin; x increases right and y increases down.' });
+window.advanceTime = (ms: number) => { for (let i = 0; i < Math.floor(ms / 150); i += 1) advanceNavigation(world); render(); };
