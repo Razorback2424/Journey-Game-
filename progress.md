@@ -30,3 +30,24 @@ Manual editor follow-up
 - Create battle data assets for the first playable encounter and point an overworld encounter table entry's `BattlePayload` at that `UJGBattleEncounterDefinitionDataAsset`.
 - Place/configure an `AJGEncounterZoneBase` in `/Game/Overworld/Levels/Lvl_Overworld_Test` with that encounter table.
 - Enable `bAutoProcessPendingEncounterForBattle` and `bOpenBattleLevelWhenProcessingPendingEncounter` on the active overworld game mode or Blueprint subclass, with `BattleLevelName` set to `Lvl_Battle_Test`.
+
+2026-08-03
+- Reworked `web-spike` from a Phaser/debug-style canvas shell into the attached JourneyGame Web Spike layout while retaining the tested world and battle modules.
+- Added asset-backed Hearthglen, Moss Hollow, and tactical battle presentation: town workshop swaps between closed/open art, exploration has clickable Mossling/Moonstone/encounter props, and Scout now has a distinct battle sprite.
+- Added painterly UI frame and materials icon treatment to replace the flat panel chrome.
+- Validation: `npm test` (10/10 passed), `npm run build` passed, and browser playthrough verified town → explore/discover/collect → battle plus the final battle visual layout.
+
+2026-08-03
+- Added a compact, accessible motion layer to the web vertical slice: unit idle breathing, move arrival, damage reaction, health-bar transitions, event-driven impact and mend cues, resource/discovery bursts, workshop reveal, and battle victory glow.
+- Added reusable painterly effect assets under `web-spike/public/assets/effects/`; retained the clean transparent unit sprites at runtime after visual QA caught and removed a generated-strip matte artifact.
+- Validation: `npm test` (10/10 passed), `npm run build` passed, and browser playthrough verified town/explore reward effects, the battle scene, and the attack impact effect with no console warnings or errors.
+
+2026-08-03
+- Expanded the web battle slice into an original tactical progression loop: independent movement/action/bonus/reaction state, difficult terrain, cover, initiative, Focus bonus action, deterministic capture odds, capture-orb consumption, XP, loot, automatic enemy pursuit, and a persistent reward handoff.
+- Added destination-based overworld navigation for both mouse and touch: grid-snapped path state, destination and party markers, retargeting, blocked-path messaging, arrival-only interaction prompts, and direct town/exploration interactables.
+- Reworked battle interaction around direct unit selection and tile targets. Active action tiles rise above sprite art while targeting, preventing overlapping units from intercepting touch input. Desktop/mid-width and mobile-landscape layouts retain the battlefield with a visible action tray and portrait fallback.
+- Validation this turn: `npm run build` passed; live browser QA verified town trail navigation, arrival prompts, exploration/encounter navigation, direct battle unit selection, mobile landscape rendering, reachable-tile tap movement, and no console errors. Per user direction, the test suite was not run this turn.
+
+2026-08-03
+- Static GitHub Pages review: the web spike had no Vite base configuration and used root-relative `/assets/...` references, which are incompatible with the repository subpath `/Journey-Game-/`.
+- Added `vite.config.ts` with a Pages base path toggle, a `build:pages` script, and centralized runtime asset URLs on `import.meta.env.BASE_URL`; CSS-only URLs now use base-aware runtime variables. No build, deployment, or test command was run in this review pass.
